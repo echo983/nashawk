@@ -253,6 +253,31 @@ std::optional<std::string> tr_usenet_piece_store::ensure_torrent(tr_torrent_meta
     return {};
 }
 
+std::optional<std::string> tr_usenet_piece_store::set_piece_state(
+    std::string_view const info_hash_string,
+    tr_piece_index_t const piece,
+    tr_usenet_piece_state const state) const
+{
+    auto manifest = load(info_hash_string);
+    if (!manifest)
+    {
+        return "Usenet manifest is missing";
+    }
+
+    if (piece >= manifest->piece_count())
+    {
+        return fmt::format("Usenet piece index {} is out of range", piece);
+    }
+
+    manifest->set_piece_state(piece, state);
+    if (!save(*manifest))
+    {
+        return "Could not save Usenet piece manifest";
+    }
+
+    return {};
+}
+
 std::optional<tr_usenet_piece_manifest> tr_usenet_piece_store::load(std::string_view const info_hash_string) const
 {
     auto const filename = manifest_path(info_hash_string);

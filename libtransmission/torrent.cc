@@ -2190,6 +2190,7 @@ void tr_torrent::on_file_completed(tr_file_index_t const file)
 void tr_torrent::on_piece_completed(tr_piece_index_t const piece)
 {
     piece_completed_(this, piece);
+    session->onUsenetPieceCompleted(*this, piece);
 
     // bookkeeping
     set_needs_completeness_check();

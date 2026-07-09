@@ -75,6 +75,40 @@ TEST_F(UsenetPieceStoreTest, savesPieceState)
     EXPECT_TRUE(loaded->is_available(0));
 }
 
+TEST_F(UsenetPieceStoreTest, setPieceStateUpdatesManifest)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+
+    EXPECT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 1, tr_usenet_piece_state::Uploading));
+
+    auto loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    ASSERT_LT(1U, loaded->piece_count());
+    EXPECT_EQ(tr_usenet_piece_state::Uploading, loaded->pieces[1].state);
+}
+
+TEST_F(UsenetPieceStoreTest, setPieceStateRejectsMissingManifest)
+{
+    auto store = tr_usenet_piece_store{ sandboxDir(), 1U };
+
+    auto error = store.set_piece_state("0123456789012345678901234567890123456789"sv, 0, tr_usenet_piece_state::Uploading);
+    ASSERT_TRUE(error);
+    EXPECT_NE(std::string::npos, error->find("missing"));
+}
+
+TEST_F(UsenetPieceStoreTest, setPieceStateRejectsOutOfRangePiece)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+
+    auto error = store.set_piece_state(metainfo.info_hash_string(), metainfo.piece_count(), tr_usenet_piece_state::Uploading);
+    ASSERT_TRUE(error);
+    EXPECT_NE(std::string::npos, error->find("out of range"));
+}
+
 TEST_F(UsenetPieceStoreTest, rejectsOversizedPiece)
 {
     auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);

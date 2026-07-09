@@ -56,6 +56,10 @@ public:
 
     [[nodiscard]] bool is_piece_size_eligible(uint64_t piece_size) const noexcept;
     [[nodiscard]] std::optional<std::string> ensure_torrent(tr_torrent_metainfo const& metainfo);
+    [[nodiscard]] std::optional<std::string> set_piece_state(
+        std::string_view info_hash_string,
+        tr_piece_index_t piece,
+        tr_usenet_piece_state state) const;
     [[nodiscard]] std::optional<tr_usenet_piece_manifest> load(std::string_view info_hash_string) const;
     [[nodiscard]] bool save(tr_usenet_piece_manifest const& manifest) const;
     [[nodiscard]] std::string manifest_path(std::string_view info_hash_string) const;

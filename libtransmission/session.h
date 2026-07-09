@@ -1032,6 +1032,7 @@ public:
 
     void addTorrent(tr_torrent* tor);
     void ensureUsenetTorrent(tr_torrent* tor);
+    void onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t piece);
 
     // NOLINTNEXTLINE(readability-make-member-function-const)
     void maybe_add_dht_node(tr_address const& addr, tr_port port)

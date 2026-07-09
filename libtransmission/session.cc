@@ -2218,3 +2218,19 @@ void tr_session::ensureUsenetTorrent(tr_torrent* const tor)
         tr_torrentStop(tor);
     }
 }
+
+void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t const piece)
+{
+    if (usenet_piece_store_ == nullptr || !tor.has_metainfo())
+    {
+        return;
+    }
+
+    if (auto error = usenet_piece_store_->set_piece_state(tor.info_hash_string(), piece, tr_usenet_piece_state::Uploading); error)
+    {
+        tr_logAddWarnTor(&tor, fmt::format("Could not queue piece {} for Usenet upload: {}", piece, *error));
+        return;
+    }
+
+    tr_logAddTraceTor(&tor, fmt::format("Queued piece {} for Usenet upload", piece));
+}
