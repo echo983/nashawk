@@ -4,6 +4,12 @@
 
 /beta
 /build
+/downloads
+/download
+/incomplete
+/watch
+/transmission-home
+*.part
 Transmission.xcodeproj/*.xcworkspace
 Transmission.xcodeproj/xcuserdata
 /cli/transmissioncli
