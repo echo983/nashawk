@@ -53,6 +53,7 @@
 #include "libtransmission/timer-ev.h"
 #include "libtransmission/torrent.h"
 #include "libtransmission/torrent-ctor.h"
+#include "libtransmission/usenet-piece-store.h"
 #include "libtransmission/tr-assert.h"
 #include "libtransmission/tr-dht.h"
 #include "libtransmission/tr-lpd.h"
@@ -767,6 +768,11 @@ void tr_session::initImpl(init_data& data)
         fmt::format(fmt::runtime(_("Transmission version {version} starting")), fmt::arg("version", LONG_VERSION_STRING)));
 
     setSettings(settings, true);
+
+    if (settings_.usenet_enabled)
+    {
+        usenet_piece_store_ = std::make_unique<tr_usenet_piece_store>(config_dir_, settings_.usenet_check_article_size);
+    }
 
     tr_utp_init(this);
 
@@ -2193,4 +2199,22 @@ void tr_session::addTorrent(tr_torrent* tor)
     torrent_queue_.add(tor->id());
 
     tr_peerMgrAddTorrent(peer_mgr_.get(), tor);
+
+    ensureUsenetTorrent(tor);
+}
+
+void tr_session::ensureUsenetTorrent(tr_torrent* const tor)
+{
+    if (usenet_piece_store_ == nullptr || tor == nullptr || !tor->has_metainfo())
+    {
+        return;
+    }
+
+    if (auto error = usenet_piece_store_->ensure_torrent(tor->metainfo()); error)
+    {
+        auto const message = *error;
+        tr_logAddErrorTor(tor, std::move(*error));
+        tor->error().set_local_error(message);
+        tr_torrentStop(tor);
+    }
 }

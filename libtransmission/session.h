@@ -71,6 +71,7 @@
 tr_peer_id_t tr_peerIdInit();
 
 class tr_peer_socket;
+class tr_usenet_piece_store;
 struct tr_pex;
 struct tr_torrent;
 struct struct_utp_context;
@@ -1030,6 +1031,7 @@ public:
     void addIncoming(std::shared_ptr<tr_peer_socket> socket);
 
     void addTorrent(tr_torrent* tor);
+    void ensureUsenetTorrent(tr_torrent* tor);
 
     // NOLINTNEXTLINE(readability-make-member-function-const)
     void maybe_add_dht_node(tr_address const& addr, tr_port port)
@@ -1043,6 +1045,11 @@ public:
     [[nodiscard]] constexpr auto unused_cache_size_mbytes() const
     {
         return settings().unused_cache_size_mbytes;
+    }
+
+    [[nodiscard]] constexpr bool usenet_enabled() const noexcept
+    {
+        return settings().usenet_enabled;
     }
 
     constexpr void set_unused_cache_size_mbytes(size_t const mbytes)
@@ -1207,6 +1214,7 @@ private:
 
     // depends-on: session_thread_
     std::unique_ptr<tr::TimerMaker> const timer_maker_;
+    std::unique_ptr<tr_usenet_piece_store> usenet_piece_store_;
 
     /// trivial type fields
 

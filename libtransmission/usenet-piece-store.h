@@ -1,0 +1,71 @@
+// This file Copyright © Mnemosyne LLC.
+// It may be used under GPLv2 (SPDX: GPL-2.0-only), GPLv3 (SPDX: GPL-3.0-only),
+// or any future license endorsed by Mnemosyne LLC.
+// License text can be found in the licenses/ folder.
+
+#pragma once
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "libtransmission/types.h"
+
+struct tr_torrent_metainfo;
+
+enum class tr_usenet_piece_state : uint8_t
+{
+    Unknown,
+    Uploading,
+    Available,
+    Failed,
+};
+
+struct tr_usenet_piece_entry
+{
+    tr_usenet_piece_state state = tr_usenet_piece_state::Unknown;
+    std::string message_id;
+};
+
+struct tr_usenet_piece_manifest
+{
+    uint32_t version = 1U;
+    std::string info_hash_string;
+    uint64_t piece_size = 0U;
+    uint64_t max_article_size = 0U;
+    std::vector<tr_usenet_piece_entry> pieces;
+
+    [[nodiscard]] size_t piece_count() const noexcept;
+    [[nodiscard]] bool has_piece(tr_piece_index_t piece) const noexcept;
+    [[nodiscard]] bool is_available(tr_piece_index_t piece) const noexcept;
+
+    void set_piece_state(tr_piece_index_t piece, tr_usenet_piece_state state);
+};
+
+class tr_usenet_piece_store
+{
+public:
+    tr_usenet_piece_store(std::string_view config_dir, uint64_t max_article_size);
+
+    [[nodiscard]] constexpr uint64_t max_article_size() const noexcept
+    {
+        return max_article_size_;
+    }
+
+    [[nodiscard]] bool is_piece_size_eligible(uint64_t piece_size) const noexcept;
+    [[nodiscard]] std::optional<std::string> ensure_torrent(tr_torrent_metainfo const& metainfo);
+    [[nodiscard]] std::optional<tr_usenet_piece_manifest> load(std::string_view info_hash_string) const;
+    [[nodiscard]] bool save(tr_usenet_piece_manifest const& manifest) const;
+    [[nodiscard]] std::string manifest_path(std::string_view info_hash_string) const;
+
+private:
+    [[nodiscard]] tr_usenet_piece_manifest make_manifest(tr_torrent_metainfo const& metainfo) const;
+
+    std::string dir_;
+    uint64_t max_article_size_ = 0U;
+};
+
+[[nodiscard]] std::string_view tr_usenet_piece_state_name(tr_usenet_piece_state state) noexcept;
+[[nodiscard]] std::optional<tr_usenet_piece_state> tr_usenet_piece_state_from_name(std::string_view name) noexcept;

@@ -1047,6 +1047,7 @@ void tr_torrent::set_metainfo(tr_torrent_metainfo tm)
 
     got_metainfo_(this);
     session->onMetadataCompleted(id());
+    session->ensureUsenetTorrent(this);
     set_dirty();
     mark_edited();
 

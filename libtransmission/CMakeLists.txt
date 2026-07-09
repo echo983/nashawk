@@ -170,6 +170,8 @@ target_sources(${TR_NAME}
         tr-utp.h
         transmission.h
         types.h
+        usenet-piece-store.cc
+        usenet-piece-store.h
         usenet-service.cc
         usenet-service.h
         utils-ev.cc
