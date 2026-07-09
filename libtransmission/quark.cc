@@ -720,6 +720,10 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "use-speed-limit"sv, // .resume
     "use_global_speed_limit"sv, // .resume
     "use_speed_limit"sv, // .resume
+    "usenet_cache_dir"sv, // tr_session::Settings
+    "usenet_cache_size_mib"sv, // tr_session::Settings
+    "usenet_check_article_size"sv, // tr_session::Settings
+    "usenet_enabled"sv, // tr_session::Settings
     "ut_holepunch"sv, // BT protocol
     "ut_metadata"sv, // BEP0011; BT protocol
     "ut_pex"sv, // BEP0010, BEP0011; BT protocol

@@ -40,6 +40,7 @@
 #include <libtransmission/timer-ev.h>
 #include <libtransmission/tr-getopt.h>
 #include <libtransmission/tr-strbuf.h>
+#include <libtransmission/usenet-service.h>
 #include <libtransmission/utils.h>
 #include <libtransmission/variant.h>
 #include <libtransmission/version.h>
@@ -87,7 +88,7 @@ static_assert(TrDefaultPeerPort == 51413, "update 'peerport' desc");
 static_assert(TrDefaultPeerLimitTorrent == 50, "update 'peerlimit-torrent' desc");
 static_assert(TrDefaultPeerLimitGlobal == 200, "update 'peerlimit-global' desc");
 static_assert(TrDefaultRpcPort == 9091 && R"(update "port" desc)");
-auto constexpr Options = std::array<tr_option, 48>{ {
+auto constexpr Options = std::array<tr_option, 50>{ {
     { 'a', "allowed", "Allowed IP addresses. (Default: '127.0.0.1,::1')", "a", Arg::Required, "<list>" },
     { 'b', "blocklist", "Enable peer blocklists", "b", Arg::None, nullptr },
     { 'B', "no-blocklist", "Disable peer blocklists", "B", Arg::None, nullptr },
@@ -129,6 +130,8 @@ auto constexpr Options = std::array<tr_option, 48>{ {
       "<protocol(s)>" },
     { 831, "utp", "*DEPRECATED* Enable µTP for peer connections", nullptr, Arg::None, nullptr },
     { 832, "no-utp", "*DEPRECATED* Disable µTP for peer connections", nullptr, Arg::None, nullptr },
+    { 833, "usenet-enabled", "Enable Usenet-backed piece storage", nullptr, Arg::None, nullptr },
+    { 834, "usenet-check-article-size", "Article size to validate for Usenet startup checks", nullptr, Arg::Required, "<bytes>" },
     { 'P', "peerport", "Port for incoming peers (Default: 51413)", "P", Arg::Required, "<port>" },
     { 'm', "portmap", "Enable portmapping via NAT-PMP or UPnP", "m", Arg::None, nullptr },
     { 'M', "no-portmap", "Disable portmapping", "M", Arg::None, nullptr },
@@ -753,6 +756,17 @@ bool tr_daemon::parse_args(int argc, char const* const* argv, bool* dump_setting
             utp_arg_helpers::no_utp(*map);
             break;
 
+        case 833:
+            map->insert_or_assign(TR_KEY_usenet_enabled, true);
+            break;
+
+        case 834:
+            if (auto const article_size = tr_num_parse<int64_t>(optstr); article_size && *article_size >= 0)
+            {
+                map->insert_or_assign(TR_KEY_usenet_check_article_size, *article_size);
+            }
+            break;
+
         case TR_OPT_UNK:
             fprintf(stderr, "Unexpected argument: %s \n", optstr);
             tr_getopt_usage(MyName, Usage, std::data(Options));
@@ -835,6 +849,13 @@ int tr_daemon::start([[maybe_unused]] bool foreground)
             fmt::arg("error", tr_strerror(error_code)),
             fmt::arg("error_code", error_code));
         printMessage(log_stream_, TR_LOG_ERROR, MyName, errmsg, __FILE__, __LINE__);
+        cleanup_signals(sig_ev);
+        return 1;
+    }
+
+    if (auto const usenet_error = tr_usenet_startup_check(config_dir_, settings_); usenet_error)
+    {
+        printMessage(log_stream_, TR_LOG_ERROR, MyName, *usenet_error, __FILE__, __LINE__);
         cleanup_signals(sig_ev);
         return 1;
     }
