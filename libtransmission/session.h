@@ -80,6 +80,33 @@ struct tr_torrent;
 struct struct_utp_context;
 struct tr_variant;
 
+struct tr_usenet_runtime_snapshot
+{
+    bool enabled = false;
+    bool eviction_enabled = false;
+    size_t io_limit = 0U;
+    size_t io_active = 0U;
+    size_t upload_queue_size = 0U;
+    size_t download_queue_size = 0U;
+    size_t download_in_flight = 0U;
+    size_t upload_concurrency = 0U;
+    size_t eviction_min_age_minutes = 0U;
+    size_t cache_size_mib = 0U;
+};
+
+struct tr_usenet_piece_summary
+{
+    bool eligible = false;
+    bool manifest_present = false;
+    size_t piece_count = 0U;
+    size_t local_piece_count = 0U;
+    size_t unknown = 0U;
+    size_t uploading = 0U;
+    size_t available = 0U;
+    size_t failed = 0U;
+    size_t servable = 0U;
+};
+
 namespace tr::test
 {
 
@@ -1066,6 +1093,9 @@ public:
     {
         return settings().usenet_enabled;
     }
+
+    [[nodiscard]] tr_usenet_runtime_snapshot usenetRuntimeSnapshot();
+    [[nodiscard]] tr_usenet_piece_summary usenetPieceSummary(tr_torrent const& tor);
 
     constexpr void set_unused_cache_size_mbytes(size_t const mbytes)
     {

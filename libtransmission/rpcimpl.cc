@@ -785,6 +785,7 @@ namespace make_torrent_field_helpers
     case TR_KEY_upload_limited:
     case TR_KEY_upload_ratio:
     case TR_KEY_uploaded_ever:
+    case TR_KEY_usenet_piece_summary:
     case TR_KEY_wanted:
     case TR_KEY_webseeds:
     case TR_KEY_webseeds_ex:
@@ -794,6 +795,24 @@ namespace make_torrent_field_helpers
     default:
         return false;
     }
+}
+
+[[nodiscard]] tr_variant make_usenet_piece_summary_map(tr_session& session, tr_torrent const& tor)
+{
+    auto const summary = session.usenetPieceSummary(tor);
+    auto map = tr_variant::Map{ 9U };
+
+    map.try_emplace(TR_KEY_eligible, summary.eligible);
+    map.try_emplace(TR_KEY_manifest_present, summary.manifest_present);
+    map.try_emplace(TR_KEY_piece_count, summary.piece_count);
+    map.try_emplace(TR_KEY_local_piece_count, summary.local_piece_count);
+    map.try_emplace(TR_KEY_unknown, summary.unknown);
+    map.try_emplace(TR_KEY_uploading, summary.uploading);
+    map.try_emplace(TR_KEY_available, summary.available);
+    map.try_emplace(TR_KEY_failed, summary.failed);
+    map.try_emplace(TR_KEY_servable, summary.servable);
+
+    return tr_variant{ std::move(map) };
 }
 
 [[nodiscard]] tr_variant make_torrent_field(tr_torrent const& tor, tr_stat const& st, tr_quark key)
@@ -958,6 +977,8 @@ namespace make_torrent_field_helpers
         return st.upload_ratio;
     case TR_KEY_uploaded_ever:
         return st.uploaded_ever;
+    case TR_KEY_usenet_piece_summary:
+        return make_usenet_piece_summary_map(*tor.session, tor);
     case TR_KEY_wanted:
         return make_file_wanted_vec(tor);
     case TR_KEY_webseeds:
@@ -2001,6 +2022,25 @@ void add_strings_from_var(std::set<std::string_view>& strings, tr_variant const&
 
 // ---
 
+[[nodiscard]] tr_variant make_usenet_runtime_map(tr_session& session)
+{
+    auto const snapshot = session.usenetRuntimeSnapshot();
+    auto map = tr_variant::Map{ 10U };
+
+    map.try_emplace(TR_KEY_usenet_enabled, snapshot.enabled);
+    map.try_emplace(TR_KEY_usenet_io_limit, snapshot.io_limit);
+    map.try_emplace(TR_KEY_usenet_io_active, snapshot.io_active);
+    map.try_emplace(TR_KEY_usenet_upload_queue_size, snapshot.upload_queue_size);
+    map.try_emplace(TR_KEY_usenet_download_queue_size, snapshot.download_queue_size);
+    map.try_emplace(TR_KEY_usenet_download_in_flight, snapshot.download_in_flight);
+    map.try_emplace(TR_KEY_usenet_upload_concurrency, snapshot.upload_concurrency);
+    map.try_emplace(TR_KEY_usenet_eviction_enabled, snapshot.eviction_enabled);
+    map.try_emplace(TR_KEY_usenet_eviction_min_age_minutes, snapshot.eviction_min_age_minutes);
+    map.try_emplace(TR_KEY_usenet_cache_size_mib, snapshot.cache_size_mib);
+
+    return tr_variant{ std::move(map) };
+}
+
 [[nodiscard]] std::pair<JsonRpc::Error::Code, std::string> sessionStats(
     tr_session* session,
     tr_variant::Map const& /*args_in*/,
@@ -2024,7 +2064,7 @@ void add_strings_from_var(std::set<std::string_view>& strings, tr_variant const&
         std::end(torrents),
         [](auto const* tor) { return tor->is_running(); });
 
-    args_out.reserve(std::size(args_out) + 7U);
+    args_out.reserve(std::size(args_out) + 8U);
     args_out.try_emplace(TR_KEY_active_torrent_count, n_running);
     args_out.try_emplace(TR_KEY_cumulative_stats, make_stats_map(session->stats().cumulative()));
     args_out.try_emplace(TR_KEY_current_stats, make_stats_map(session->stats().current()));
@@ -2032,6 +2072,7 @@ void add_strings_from_var(std::set<std::string_view>& strings, tr_variant const&
     args_out.try_emplace(TR_KEY_paused_torrent_count, total - n_running);
     args_out.try_emplace(TR_KEY_torrent_count, total);
     args_out.try_emplace(TR_KEY_upload_speed, session->piece_speed(tr_direction::Up).base_quantity());
+    args_out.try_emplace(TR_KEY_usenet, make_usenet_runtime_map(*session));
 
     return { JsonRpc::Error::SUCCESS, std::string{} };
 }
@@ -2074,7 +2115,7 @@ using SessionAccessors = std::pair<SessionGetter, SessionSetter>;
 
 [[nodiscard]] auto& session_accessors()
 {
-    static auto map = small::max_size_map<tr_quark, SessionAccessors, 64U>{};
+    static auto map = small::max_size_map<tr_quark, SessionAccessors, 80U>{};
 
     if (!std::empty(map))
     {
@@ -2219,6 +2260,31 @@ using SessionAccessors = std::pair<SessionGetter, SessionSetter>;
         });
 
     map.try_emplace(TR_KEY_config_dir, [](tr_session const& src) -> tr_variant { return src.configDir(); }, nullptr);
+
+    map.try_emplace(
+        TR_KEY_usenet_cache_size_mib,
+        [](tr_session const& src) -> tr_variant { return src.settings().usenet_cache_size_mib; },
+        nullptr);
+
+    map.try_emplace(
+        TR_KEY_usenet_enabled,
+        [](tr_session const& src) -> tr_variant { return src.settings().usenet_enabled; },
+        nullptr);
+
+    map.try_emplace(
+        TR_KEY_usenet_eviction_enabled,
+        [](tr_session const& src) -> tr_variant { return src.settings().usenet_eviction_enabled; },
+        nullptr);
+
+    map.try_emplace(
+        TR_KEY_usenet_eviction_min_age_minutes,
+        [](tr_session const& src) -> tr_variant { return src.settings().usenet_eviction_min_age_minutes; },
+        nullptr);
+
+    map.try_emplace(
+        TR_KEY_usenet_upload_concurrency,
+        [](tr_session const& src) -> tr_variant { return src.settings().usenet_upload_concurrency; },
+        nullptr);
 
     map.try_emplace(
         TR_KEY_default_trackers,

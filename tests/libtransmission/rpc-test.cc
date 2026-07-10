@@ -661,6 +661,11 @@ TEST_F(RpcTest, sessionGet)
         TR_KEY_tcp_enabled,
         TR_KEY_trash_original_torrent_files,
         TR_KEY_units,
+        TR_KEY_usenet_cache_size_mib,
+        TR_KEY_usenet_enabled,
+        TR_KEY_usenet_eviction_enabled,
+        TR_KEY_usenet_eviction_min_age_minutes,
+        TR_KEY_usenet_upload_concurrency,
         TR_KEY_utp_enabled,
         TR_KEY_version,
     };
@@ -684,6 +689,37 @@ TEST_F(RpcTest, sessionGet)
 
     // cleanup
     tr_torrentRemove(tor, false);
+}
+
+TEST_F(RpcTest, sessionStatsIncludesUsenetRuntimeSnapshot)
+{
+    auto request_map = tr_variant::Map{ 3U };
+    request_map.try_emplace(TR_KEY_jsonrpc, JsonRpc::Version);
+    request_map.try_emplace(TR_KEY_method, tr_variant::unmanaged_string(TR_KEY_session_stats));
+    request_map.try_emplace(TR_KEY_id, 12345);
+
+    auto request = tr_variant{ std::move(request_map) };
+    auto response = tr_variant{};
+    tr_rpc_request_exec(session_, request, [&response](tr_variant&& resp) { response = std::move(resp); });
+
+    auto* response_map = response.get_if<tr_variant::Map>();
+    ASSERT_NE(response_map, nullptr);
+    auto* result = response_map->find_if<tr_variant::Map>(TR_KEY_result);
+    ASSERT_NE(result, nullptr);
+
+    auto* usenet = result->find_if<tr_variant::Map>(TR_KEY_usenet);
+    ASSERT_NE(usenet, nullptr);
+
+    EXPECT_FALSE(usenet->value_if<bool>(TR_KEY_usenet_enabled).value_or(true));
+    EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_io_limit).value_or(-1));
+    EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_io_active).value_or(-1));
+    EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_upload_queue_size).value_or(-1));
+    EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_download_queue_size).value_or(-1));
+    EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_download_in_flight).value_or(-1));
+    EXPECT_EQ(4, usenet->value_if<int64_t>(TR_KEY_usenet_upload_concurrency).value_or(-1));
+    EXPECT_FALSE(usenet->value_if<bool>(TR_KEY_usenet_eviction_enabled).value_or(true));
+    EXPECT_EQ(60, usenet->value_if<int64_t>(TR_KEY_usenet_eviction_min_age_minutes).value_or(-1));
+    EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_cache_size_mib).value_or(-1));
 }
 
 TEST_F(RpcTest, torrentGet)
@@ -723,6 +759,54 @@ TEST_F(RpcTest, torrentGet)
     EXPECT_EQ(1, *first_torrent_id);
 
     // cleanup
+    tr_torrentRemove(tor, false);
+}
+
+TEST_F(RpcTest, torrentGetIncludesUsenetPieceSummary)
+{
+    auto* tor = zeroTorrentInit(ZeroTorrentState::NoFiles);
+    EXPECT_NE(nullptr, tor);
+
+    auto request_map = tr_variant::Map{ 3U };
+    request_map.try_emplace(TR_KEY_jsonrpc, JsonRpc::Version);
+    request_map.try_emplace(TR_KEY_method, tr_variant::unmanaged_string(TR_KEY_torrent_get));
+    request_map.try_emplace(TR_KEY_id, 12345);
+
+    auto params = tr_variant::Map{ 1U };
+    auto fields = tr_variant::Vector{};
+    fields.emplace_back(tr_quark_get_string_view(TR_KEY_id));
+    fields.emplace_back(tr_quark_get_string_view(TR_KEY_usenet_piece_summary));
+    params.try_emplace(TR_KEY_fields, std::move(fields));
+    request_map.try_emplace(TR_KEY_params, std::move(params));
+
+    auto request = tr_variant{ std::move(request_map) };
+    auto response = tr_variant{};
+    tr_rpc_request_exec(session_, request, [&response](tr_variant&& resp) { response = std::move(resp); });
+
+    auto* response_map = response.get_if<tr_variant::Map>();
+    ASSERT_NE(response_map, nullptr);
+    auto* result = response_map->find_if<tr_variant::Map>(TR_KEY_result);
+    ASSERT_NE(result, nullptr);
+
+    auto* torrents = result->find_if<tr_variant::Vector>(TR_KEY_torrents);
+    ASSERT_NE(torrents, nullptr);
+    ASSERT_EQ(1UL, std::size(*torrents));
+
+    auto* first_torrent = (*torrents)[0].get_if<tr_variant::Map>();
+    ASSERT_NE(first_torrent, nullptr);
+    auto* summary = first_torrent->find_if<tr_variant::Map>(TR_KEY_usenet_piece_summary);
+    ASSERT_NE(summary, nullptr);
+
+    EXPECT_FALSE(summary->value_if<bool>(TR_KEY_eligible).value_or(true));
+    EXPECT_FALSE(summary->value_if<bool>(TR_KEY_manifest_present).value_or(true));
+    EXPECT_EQ(static_cast<int64_t>(tor->piece_count()), summary->value_if<int64_t>(TR_KEY_piece_count).value_or(-1));
+    EXPECT_EQ(0, summary->value_if<int64_t>(TR_KEY_local_piece_count).value_or(-1));
+    EXPECT_EQ(0, summary->value_if<int64_t>(TR_KEY_unknown).value_or(-1));
+    EXPECT_EQ(0, summary->value_if<int64_t>(TR_KEY_uploading).value_or(-1));
+    EXPECT_EQ(0, summary->value_if<int64_t>(TR_KEY_available).value_or(-1));
+    EXPECT_EQ(0, summary->value_if<int64_t>(TR_KEY_failed).value_or(-1));
+    EXPECT_EQ(0, summary->value_if<int64_t>(TR_KEY_servable).value_or(-1));
+
     tr_torrentRemove(tor, false);
 }
 

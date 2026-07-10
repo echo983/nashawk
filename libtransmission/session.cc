@@ -2462,6 +2462,121 @@ size_t tr_session::usenetIoLimit() const
     return std::clamp(settings_.usenet_upload_concurrency, size_t{ 1U }, MaxUsenetIoConcurrency);
 }
 
+tr_usenet_runtime_snapshot tr_session::usenetRuntimeSnapshot()
+{
+    auto snapshot = tr_usenet_runtime_snapshot{
+        .enabled = settings_.usenet_enabled,
+        .eviction_enabled = settings_.usenet_eviction_enabled,
+        .io_limit = usenetIoLimit(),
+        .io_active = 0U,
+        .upload_queue_size = 0U,
+        .download_queue_size = 0U,
+        .download_in_flight = 0U,
+        .upload_concurrency = settings_.usenet_upload_concurrency,
+        .eviction_min_age_minutes = settings_.usenet_eviction_min_age_minutes,
+        .cache_size_mib = settings_.usenet_cache_size_mib,
+    };
+
+    {
+        auto lock = std::lock_guard{ usenet_io_mutex_ };
+        snapshot.io_limit = usenet_io_limit_;
+        snapshot.io_active = usenet_io_active_;
+    }
+
+    {
+        auto lock = std::lock_guard{ usenet_upload_mutex_ };
+        snapshot.upload_queue_size = std::size(usenet_upload_queue_);
+    }
+
+    {
+        auto lock = std::lock_guard{ usenet_download_mutex_ };
+        snapshot.download_queue_size = std::size(usenet_download_queue_);
+        snapshot.download_in_flight = std::size(usenet_download_in_flight_);
+    }
+
+    if (!snapshot.enabled)
+    {
+        snapshot.io_limit = 0U;
+        snapshot.io_active = 0U;
+        snapshot.upload_queue_size = 0U;
+        snapshot.download_queue_size = 0U;
+        snapshot.download_in_flight = 0U;
+    }
+
+    return snapshot;
+}
+
+tr_usenet_piece_summary tr_session::usenetPieceSummary(tr_torrent const& tor)
+{
+    auto summary = tr_usenet_piece_summary{};
+    if (!tor.has_metainfo())
+    {
+        return summary;
+    }
+
+    summary.piece_count = tor.piece_count();
+
+    for (tr_piece_index_t piece = 0; piece < tor.piece_count(); ++piece)
+    {
+        if (tor.has_piece(piece))
+        {
+            ++summary.local_piece_count;
+        }
+    }
+
+    auto manifest = std::optional<tr_usenet_piece_manifest>{};
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        if (usenet_piece_store_ == nullptr)
+        {
+            summary.servable = summary.local_piece_count;
+            return summary;
+        }
+
+        summary.eligible = usenet_piece_store_->is_piece_size_eligible(tor.piece_size());
+        manifest = usenet_piece_store_->load(tor.info_hash_string());
+    }
+
+    if (!manifest)
+    {
+        summary.servable = summary.local_piece_count;
+        return summary;
+    }
+
+    summary.manifest_present = true;
+
+    for (tr_piece_index_t piece = 0; piece < tor.piece_count(); ++piece)
+    {
+        auto const state = piece < std::size(manifest->pieces) ? manifest->pieces[piece].state : tr_usenet_piece_state::Unknown;
+
+        switch (state)
+        {
+        case tr_usenet_piece_state::Unknown:
+            ++summary.unknown;
+            break;
+
+        case tr_usenet_piece_state::Uploading:
+            ++summary.uploading;
+            break;
+
+        case tr_usenet_piece_state::Available:
+            ++summary.available;
+            break;
+
+        case tr_usenet_piece_state::Failed:
+            ++summary.failed;
+            break;
+        }
+
+        if (tor.has_piece(piece) || state == tr_usenet_piece_state::Available)
+        {
+            ++summary.servable;
+        }
+    }
+
+    return summary;
+}
+
 void tr_session::startUsenetEvictionTimer()
 {
     if (usenet_piece_store_ == nullptr || !settings_.usenet_eviction_enabled)

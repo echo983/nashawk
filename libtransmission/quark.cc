@@ -63,6 +63,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "anti_brute_force_threshold"sv, // rpc server settings
     "arguments"sv, // json-rpc
     "availability"sv, // rpc
+    "available"sv, // rpc
     "bandwidth-priority"sv, // .resume
     "bandwidthPriority"sv, // rpc
     "bandwidth_priority"sv, // .resume, rpc
@@ -167,6 +168,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "e"sv, // BT protocol
     "editDate"sv, // rpc
     "edit_date"sv, // rpc
+    "eligible"sv, // rpc
     "encoding"sv, // .torrent
     "encryption"sv, // daemon, rpc, tr_session::Settings
     "end_piece"sv, // rpc
@@ -176,6 +178,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "eta"sv, // rpc
     "etaIdle"sv, // rpc
     "eta_idle"sv, // rpc
+    "failed"sv, // rpc
     "fields"sv, // rpc
     "file-count"sv, // rpc
     "fileStats"sv, // rpc
@@ -306,6 +309,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "leftUntilDone"sv, // rpc
     "left_until_done"sv, // rpc
     "length"sv, // .torrent, rpc
+    "local_piece_count"sv, // rpc
     "location"sv, // rpc
     "lpd-enabled"sv, // daemon, rpc, tr_session::Settings
     "lpd_enabled"sv, // daemon, rpc, tr_session::Settings
@@ -324,6 +328,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "main_window_width"sv, // gtk app, qt app
     "main_window_x"sv, // gtk app, qt app
     "main_window_y"sv, // gtk app, qt app
+    "manifest_present"sv, // rpc
     "manualAnnounceTime"sv, // rpc
     "manual_announce_time"sv, // rpc
     "max-peers"sv, // .resume
@@ -561,6 +566,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "seeding_time_seconds"sv, // .resume
     "sequential_download"sv, // .resume, daemon, rpc, tr_session::Settings
     "sequential_download_from_piece"sv, // .resume, rpc
+    "servable"sv, // rpc
     "session-close"sv, // rpc
     "session-count"sv, // stats.json
     "session-get"sv, // rpc
@@ -697,6 +703,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "trash_original_torrent_files"sv, // gtk app, rpc, tr_session::Settings
     "umask"sv, // tr_session::Settings
     "units"sv, // rpc
+    "unknown"sv, // rpc
     "upload-slots-per-torrent"sv, // tr_session::Settings
     "uploadLimit"sv, // rpc
     "uploadLimited"sv, // rpc
@@ -714,19 +721,27 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "uploadedEver"sv, // rpc
     "uploaded_bytes"sv, // rpc, stats.json
     "uploaded_ever"sv, // rpc
+    "uploading"sv, // rpc
     "url"sv, // rpc
     "url-list"sv, // .torrent
     "use-global-speed-limit"sv, // .resume
     "use-speed-limit"sv, // .resume
     "use_global_speed_limit"sv, // .resume
     "use_speed_limit"sv, // .resume
+    "usenet"sv, // rpc
     "usenet_cache_dir"sv, // tr_session::Settings
     "usenet_cache_size_mib"sv, // tr_session::Settings
     "usenet_check_article_size"sv, // tr_session::Settings
+    "usenet_download_in_flight"sv, // rpc
+    "usenet_download_queue_size"sv, // rpc
     "usenet_enabled"sv, // tr_session::Settings
     "usenet_eviction_enabled"sv, // tr_session::Settings
     "usenet_eviction_min_age_minutes"sv, // tr_session::Settings
+    "usenet_io_active"sv, // rpc
+    "usenet_io_limit"sv, // rpc
+    "usenet_piece_summary"sv, // rpc
     "usenet_upload_concurrency"sv, // tr_session::Settings
+    "usenet_upload_queue_size"sv, // rpc
     "ut_holepunch"sv, // BT protocol
     "ut_metadata"sv, // BEP0011; BT protocol
     "ut_pex"sv, // BEP0010, BEP0011; BT protocol

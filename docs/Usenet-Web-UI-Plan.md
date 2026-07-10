@@ -55,24 +55,25 @@ Add a read-only `usenet` object:
 
 ```json
 {
-  "enabled": true,
-  "io_limit": 40,
-  "io_active": 3,
-  "upload_queue_size": 12,
-  "download_queue_size": 1,
-  "download_in_flight": 1,
-  "eviction_enabled": true,
-  "eviction_min_age_minutes": 60,
-  "cache_size_mib": 4096
+  "usenet_enabled": true,
+  "usenet_io_limit": 40,
+  "usenet_io_active": 3,
+  "usenet_upload_queue_size": 12,
+  "usenet_download_queue_size": 1,
+  "usenet_download_in_flight": 1,
+  "usenet_upload_concurrency": 40,
+  "usenet_eviction_enabled": true,
+  "usenet_eviction_min_age_minutes": 60,
+  "usenet_cache_size_mib": 4096
 }
 ```
 
 Implementation notes:
 
 - Values must be sampled under the existing mutexes.
-- `io_active` must count both upload and download work because both share the same limiter.
+- `usenet_io_active` must count both upload and download work because both share the same limiter.
 - No `.env` values are exposed.
-- If Usenet mode is disabled, still return the object with `enabled: false` and zero runtime counters. This makes UI and diagnostics stable.
+- If Usenet mode is disabled, still return the object with `usenet_enabled: false` and zero runtime counters. This makes UI and diagnostics stable.
 
 ### `torrent_get`
 
