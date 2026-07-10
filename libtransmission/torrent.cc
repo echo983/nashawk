@@ -880,6 +880,7 @@ void tr_torrent::on_metainfo_completed()
         completion_.set_has_all();
         recheck_completeness();
         date_done_ = date_added_; // Must be after recheck_completeness()
+        session->queueUsenetUploadsForLocalPieces(*this);
 
         if (start_when_stable_)
         {
@@ -1734,6 +1735,7 @@ void tr_torrent::VerifyMediator::on_verify_done(bool const aborted)
                 }
 
                 tor->recheck_completeness();
+                session->queueUsenetUploadsForLocalPieces(*tor);
 
                 if (tor->verify_done_callback_)
                 {
