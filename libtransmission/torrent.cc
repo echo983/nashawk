@@ -880,6 +880,7 @@ void tr_torrent::on_metainfo_completed()
         completion_.set_has_all();
         recheck_completeness();
         date_done_ = date_added_; // Must be after recheck_completeness()
+        session->queueUsenetUploadsForLocalPieces(*this);
 
         if (start_when_stable_)
         {
@@ -950,6 +951,7 @@ void tr_torrent::init(tr_ctor const& ctor)
     }
 
     completeness_ = completion_.status();
+    session->queueUsenetUploadsForLocalPieces(*this);
 
     ctor.init_torrent_priorities(*this);
     ctor.init_torrent_wanted(*this);
@@ -1047,6 +1049,7 @@ void tr_torrent::set_metainfo(tr_torrent_metainfo tm)
 
     got_metainfo_(this);
     session->onMetadataCompleted(id());
+    session->ensureUsenetTorrent(this);
     set_dirty();
     mark_edited();
 
@@ -1732,6 +1735,7 @@ void tr_torrent::VerifyMediator::on_verify_done(bool const aborted)
                 }
 
                 tor->recheck_completeness();
+                session->queueUsenetUploadsForLocalPieces(*tor);
 
                 if (tor->verify_done_callback_)
                 {
@@ -2189,6 +2193,7 @@ void tr_torrent::on_file_completed(tr_file_index_t const file)
 void tr_torrent::on_piece_completed(tr_piece_index_t const piece)
 {
     piece_completed_(this, piece);
+    session->onUsenetPieceCompleted(*this, piece);
 
     // bookkeeping
     set_needs_completeness_check();
@@ -2569,6 +2574,26 @@ void tr_torrent::mark_changed()
 
     checked_pieces_.set(piece, checked);
     return checked;
+}
+
+[[nodiscard]] bool tr_torrent::install_recovered_piece(tr_piece_index_t const piece)
+{
+    TR_ASSERT(session->am_in_session_thread());
+    TR_ASSERT(piece < this->piece_count());
+
+    if (!check_piece(piece))
+    {
+        set_has_piece(piece, false);
+        checked_pieces_.set(piece, true);
+        return false;
+    }
+
+    set_has_piece(piece, true);
+    checked_pieces_.set(piece, true);
+    mark_changed();
+    set_dirty();
+    on_piece_completed(piece);
+    return true;
 }
 
 // --- RESUME HELPER

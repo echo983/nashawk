@@ -333,3 +333,81 @@ bool tr_spawn_async(
 
     return ret;
 }
+
+bool tr_spawn_sync(
+    char const* const* cmd,
+    std::map<std::string_view, std::string_view> const& env,
+    std::string_view work_dir,
+    tr_error* error)
+{
+    auto full_env = get_current_env();
+    for (auto const& [key, val] : env)
+    {
+        full_env.insert_or_assign(tr_win32_utf8_to_native(key), tr_win32_utf8_to_native(val));
+    }
+
+    auto cmd_line = construct_cmd_line(cmd);
+    if (std::empty(cmd_line))
+    {
+        set_system_error(error, ERROR_INVALID_PARAMETER, "Constructing command line");
+        return false;
+    }
+
+    auto const current_dir = tr_win32_utf8_to_native(work_dir);
+
+    auto si = STARTUPINFOW{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    PROCESS_INFORMATION pi;
+
+    bool const created = to_bool(CreateProcessW(
+        nullptr,
+        std::data(cmd_line),
+        nullptr,
+        nullptr,
+        FALSE,
+        NORMAL_PRIORITY_CLASS | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | CREATE_DEFAULT_ERROR_MODE,
+        std::empty(full_env) ? nullptr : to_env_string(full_env).data(),
+        std::empty(current_dir) ? nullptr : current_dir.c_str(),
+        &si,
+        &pi));
+
+    if (!created)
+    {
+        set_system_error(error, GetLastError(), "Call to CreateProcess()");
+        return false;
+    }
+
+    CloseHandle(pi.hThread);
+
+    if (WaitForSingleObject(pi.hProcess, INFINITE) != WAIT_OBJECT_0)
+    {
+        set_system_error(error, GetLastError(), "Call to WaitForSingleObject()");
+        CloseHandle(pi.hProcess);
+        return false;
+    }
+
+    auto exit_code = DWORD{};
+    if (!to_bool(GetExitCodeProcess(pi.hProcess, &exit_code)))
+    {
+        set_system_error(error, GetLastError(), "Call to GetExitCodeProcess()");
+        CloseHandle(pi.hProcess);
+        return false;
+    }
+
+    CloseHandle(pi.hProcess);
+
+    if (exit_code == EXIT_SUCCESS)
+    {
+        return true;
+    }
+
+    if (error != nullptr)
+    {
+        error->set(static_cast<tr_error_code_t>(exit_code), fmt::format("Child process exited with code {}", exit_code));
+    }
+
+    return false;
+}

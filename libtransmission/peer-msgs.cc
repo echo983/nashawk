@@ -549,6 +549,40 @@ private:
     // ---
 
     [[nodiscard]] bool is_valid_request(peer_request const& req) const;
+    [[nodiscard]] bool can_serve_piece(tr_piece_index_t piece) const
+    {
+        return tor_.has_piece(piece) || session->hasUsenetPiece(tor_, piece);
+    }
+
+    [[nodiscard]] std::vector<uint8_t> create_served_piece_bitfield() const
+    {
+        auto bitfield = tor_.create_piece_bitfield();
+        session->addUsenetPiecesToBitfield(tor_, bitfield);
+        return bitfield;
+    }
+
+    [[nodiscard]] bool served_piece_bitfield_has_all(std::vector<uint8_t> const& bitfield) const
+    {
+        if (tor_.piece_count() == 0U)
+        {
+            return false;
+        }
+
+        for (tr_piece_index_t piece = 0; piece < tor_.piece_count(); ++piece)
+        {
+            if ((bitfield[piece / 8U] & (uint8_t{ 0x80U } >> (piece % 8U))) == 0U)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    [[nodiscard]] static bool served_piece_bitfield_has_none(std::vector<uint8_t> const& bitfield)
+    {
+        return std::ranges::none_of(bitfield, [](uint8_t const value) { return value != 0U; });
+    }
 
     void reject_all_requests()
     {
@@ -910,20 +944,21 @@ size_t tr_peerMsgsImpl::protocol_send_message(uint8_t type, Args const&... args)
 void tr_peerMsgsImpl::protocol_send_bitfield()
 {
     bool const fext = io_->supports_fext();
+    auto const bitfield = create_served_piece_bitfield();
 
-    if (fext && tor_.has_all())
+    if (fext && served_piece_bitfield_has_all(bitfield))
     {
         protocol_send_message(BtPeerMsgs::FextHaveAll);
     }
-    else if (fext && tor_.has_none())
+    else if (fext && served_piece_bitfield_has_none(bitfield))
     {
         protocol_send_message(BtPeerMsgs::FextHaveNone);
     }
-    else if (!tor_.has_none())
+    else if (!served_piece_bitfield_has_none(bitfield))
     {
         // https://www.bittorrent.org/beps/bep_0003.html#peer-messages
         // Downloaders which don't have anything yet may skip the 'bitfield' message.
-        protocol_send_message(BtPeerMsgs::Bitfield, tor_.create_piece_bitfield());
+        protocol_send_message(BtPeerMsgs::Bitfield, bitfield);
     }
 }
 
@@ -2082,7 +2117,13 @@ void tr_peerMsgsImpl::check_request_timeout(time_t const now)
     peer_requested_.pop_front();
 
     auto buf = std::array<uint8_t, tr_block_info::BlockSize>{};
-    auto ok = is_valid_request(req) && tor_.has_piece(req.index);
+    auto ok = is_valid_request(req) && can_serve_piece(req.index);
+
+    if (ok && !tor_.has_piece(req.index))
+    {
+        session->fetchUsenetPiece(tor_, req.index);
+        ok = false;
+    }
 
     if (ok)
     {
@@ -2173,7 +2214,7 @@ bool tr_peerMsgsImpl::is_valid_request(peer_request const& req) const
         return false;
     }
 
-    if (!tor_.has_piece(req.index))
+    if (!can_serve_piece(req.index))
     {
         logtrace(this, "rejecting request for a piece we don't have.");
         return false;

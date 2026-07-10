@@ -15,3 +15,9 @@ bool tr_spawn_async(
     std::map<std::string_view, std::string_view> const& env,
     std::string_view work_dir,
     tr_error* error);
+
+bool tr_spawn_sync(
+    char const* const* cmd,
+    std::map<std::string_view, std::string_view> const& env,
+    std::string_view work_dir,
+    tr_error* error);

@@ -14,9 +14,11 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef> // size_t
 #include <cstdint> // uintX_t
 #include <ctime> // time_t
+#include <deque>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -24,6 +26,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <tuple>
 #include <utility> // for std::pair
 #include <vector>
@@ -71,6 +74,7 @@
 tr_peer_id_t tr_peerIdInit();
 
 class tr_peer_socket;
+class tr_usenet_piece_store;
 struct tr_pex;
 struct tr_torrent;
 struct struct_utp_context;
@@ -1030,6 +1034,13 @@ public:
     void addIncoming(std::shared_ptr<tr_peer_socket> socket);
 
     void addTorrent(tr_torrent* tor);
+    void ensureUsenetTorrent(tr_torrent* tor);
+    void queueUsenetUploadsForLocalPieces(tr_torrent const& tor);
+    [[nodiscard]] bool hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
+    void addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield);
+    void fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
+    void onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t piece);
+    void onUsenetPieceUploadFinished(std::string info_hash_string, tr_piece_index_t piece, std::string temp_file, bool success, std::string error);
 
     // NOLINTNEXTLINE(readability-make-member-function-const)
     void maybe_add_dht_node(tr_address const& addr, tr_port port)
@@ -1043,6 +1054,11 @@ public:
     [[nodiscard]] constexpr auto unused_cache_size_mbytes() const
     {
         return settings().unused_cache_size_mbytes;
+    }
+
+    [[nodiscard]] constexpr bool usenet_enabled() const noexcept
+    {
+        return settings().usenet_enabled;
     }
 
     constexpr void set_unused_cache_size_mbytes(size_t const mbytes)
@@ -1207,6 +1223,59 @@ private:
 
     // depends-on: session_thread_
     std::unique_ptr<tr::TimerMaker> const timer_maker_;
+    std::unique_ptr<tr_usenet_piece_store> usenet_piece_store_;
+    std::mutex usenet_piece_store_mutex_;
+
+    struct UsenetUploadTask
+    {
+        std::string info_hash_string;
+        tr_piece_index_t piece = 0U;
+        std::string message_id;
+        std::string temp_file;
+        uint64_t article_size = 0U;
+    };
+
+    void startUsenetUploadWorker();
+    void stopUsenetUploadWorker();
+    void enqueueUsenetUploadTask(UsenetUploadTask task);
+    void usenetUploadWorker();
+
+    std::mutex usenet_upload_mutex_;
+    std::condition_variable usenet_upload_cv_;
+    std::deque<UsenetUploadTask> usenet_upload_queue_;
+    std::vector<std::thread> usenet_upload_threads_;
+    bool usenet_upload_stopping_ = false;
+
+    struct UsenetDownloadTask
+    {
+        tr_torrent_id_t torrent_id = 0;
+        std::string info_hash_string;
+        tr_piece_index_t piece = 0U;
+        std::string message_id;
+        uint64_t expected_size = 0U;
+    };
+
+    struct UsenetDownloadResult
+    {
+        UsenetDownloadTask task;
+        std::vector<uint8_t> data;
+        std::optional<std::string> error;
+    };
+
+    void startUsenetDownloadWorker();
+    void stopUsenetDownloadWorker();
+    void enqueueUsenetDownloadTask(UsenetDownloadTask task);
+    void usenetDownloadWorker();
+    void onUsenetPieceDownloaded(UsenetDownloadResult result);
+    [[nodiscard]] bool isUsenetDownloadInFlight(std::string_view info_hash_string, tr_piece_index_t piece) const;
+    void removeUsenetDownloadInFlight(std::string_view info_hash_string, tr_piece_index_t piece);
+
+    std::mutex usenet_download_mutex_;
+    std::condition_variable usenet_download_cv_;
+    std::deque<UsenetDownloadTask> usenet_download_queue_;
+    std::vector<std::pair<std::string, tr_piece_index_t>> usenet_download_in_flight_;
+    std::unique_ptr<std::thread> usenet_download_thread_;
+    bool usenet_download_stopping_ = false;
 
     /// trivial type fields
 

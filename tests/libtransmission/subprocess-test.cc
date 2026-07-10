@@ -286,6 +286,65 @@ TEST_P(SubprocessTest, SpawnAsyncCwdMissing)
     EXPECT_NE(""sv, error.message());
 }
 
+TEST_P(SubprocessTest, SpawnSyncArgs)
+{
+    auto const result_path = buildSandboxPath("result.txt");
+    auto const test_arg = std::string{ "sync arg" };
+    auto const args = std::array<char const*, 5>{ self_path_.c_str(), result_path.data(), arg_dump_args_.data(), test_arg.data(), nullptr };
+
+    auto error = tr_error{};
+    bool const ret = tr_spawn_sync(std::data(args), {}, {}, &error);
+    EXPECT_TRUE(ret);
+    EXPECT_FALSE(error) << error;
+
+    auto in = std::ifstream{ result_path, std::ios_base::in };
+    EXPECT_TRUE(in.is_open()) << strerror(errno);
+
+    auto line = std::string{};
+    EXPECT_TRUE(std::getline(in, line));
+    EXPECT_EQ(test_arg, line);
+
+    EXPECT_FALSE(std::getline(in, line));
+}
+
+TEST_P(SubprocessTest, SpawnSyncEnv)
+{
+    auto const result_path = buildSandboxPath("result.txt");
+    auto const test_env_key = std::string{ "TR_SYNC_TEST_ENV_KEY" };
+    auto const test_env_value = std::string{ "sync env value" };
+
+    auto const args = std::array<char const*, 5>{ self_path_.c_str(), result_path.data(), arg_dump_env_.data(), test_env_key.data(), nullptr };
+    auto const env = std::map<std::string_view, std::string_view>{ { test_env_key, test_env_value } };
+
+    auto error = tr_error{};
+    bool const ret = tr_spawn_sync(std::data(args), env, {}, &error);
+    EXPECT_TRUE(ret);
+    EXPECT_FALSE(error) << error;
+
+    auto in = std::ifstream{ result_path, std::ios_base::in };
+    EXPECT_TRUE(in.is_open()) << strerror(errno);
+
+    auto line = std::string{};
+    EXPECT_TRUE(std::getline(in, line));
+    EXPECT_EQ(test_env_value, line);
+
+    EXPECT_FALSE(std::getline(in, line));
+}
+
+TEST_P(SubprocessTest, SpawnSyncNonzeroExit)
+{
+    auto const result_path = buildSandboxPath("result.txt");
+    auto const bad_action = std::string{ "--fail" };
+    auto const args = std::array<char const*, 4>{ self_path_.c_str(), result_path.data(), bad_action.data(), nullptr };
+
+    auto error = tr_error{};
+    bool const ret = tr_spawn_sync(std::data(args), {}, {}, &error);
+    EXPECT_FALSE(ret);
+    EXPECT_TRUE(error);
+    EXPECT_NE(0, error.code());
+    EXPECT_NE(""sv, error.message());
+}
+
 INSTANTIATE_TEST_SUITE_P(
     Subprocess,
     SubprocessTest,

@@ -106,6 +106,7 @@ public:
     bool tcp_enabled = true;
     bool torrent_complete_verify_enabled = false;
     bool utp_enabled = true;
+    bool usenet_enabled = false;
     double ratio_limit = 2.0;
     size_t unused_cache_size_mbytes = 4U; // TODO(TR5): remove
     size_t download_queue_size = 5U;
@@ -117,6 +118,9 @@ public:
     size_t speed_limit_down = 100U;
     size_t speed_limit_up = 100U;
     size_t upload_slots_per_torrent = 8U;
+    size_t usenet_cache_size_mib = 1024U;
+    size_t usenet_check_article_size = 1024U * 1024U;
+    size_t usenet_upload_concurrency = 4U;
     small::max_size_vector<tr_preferred_transport, PreferredTransportCount> preferred_transports = {
         tr_preferred_transport::UTP,
         tr_preferred_transport::TCP,
@@ -136,6 +140,7 @@ public:
     std::string script_torrent_added_filename;
     std::string script_torrent_done_filename;
     std::string script_torrent_done_seeding_filename;
+    std::string usenet_cache_dir;
     tr_encryption_mode encryption_mode = TR_ENCRYPTION_PREFERRED;
     tr_log_level log_level = TR_LOG_INFO;
     tr_mode_t umask = 022;
@@ -217,6 +222,11 @@ public:
         Field<&SessionSettings::should_delete_source_torrents>{ TR_KEY_trash_original_torrent_files },
         Field<&SessionSettings::umask>{ TR_KEY_umask },
         Field<&SessionSettings::upload_slots_per_torrent>{ TR_KEY_upload_slots_per_torrent },
+        Field<&SessionSettings::usenet_cache_dir>{ TR_KEY_usenet_cache_dir },
+        Field<&SessionSettings::usenet_cache_size_mib>{ TR_KEY_usenet_cache_size_mib },
+        Field<&SessionSettings::usenet_check_article_size>{ TR_KEY_usenet_check_article_size },
+        Field<&SessionSettings::usenet_enabled>{ TR_KEY_usenet_enabled },
+        Field<&SessionSettings::usenet_upload_concurrency>{ TR_KEY_usenet_upload_concurrency },
         Field<&SessionSettings::utp_enabled>{ TR_KEY_utp_enabled });
 };
 
