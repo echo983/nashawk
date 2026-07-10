@@ -630,6 +630,7 @@ struct tr_torrent
 
     [[nodiscard]] bool ensure_piece_is_checked(tr_piece_index_t piece);
     [[nodiscard]] bool install_recovered_piece(tr_piece_index_t piece);
+    void mark_piece_evicted(tr_piece_index_t piece);
 
     /// METAINFO - MAGNET
 

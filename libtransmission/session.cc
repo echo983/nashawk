@@ -6,6 +6,7 @@
 #include <algorithm> // std::partial_sort(), std::min(), std::max()
 #include <condition_variable>
 #include <chrono>
+#include <cerrno>
 #include <csignal>
 #include <cstddef> // size_t
 #include <cstdint>
@@ -22,7 +23,9 @@
 #include <vector>
 
 #ifndef _WIN32
+#include <fcntl.h>
 #include <sys/stat.h> /* umask() */
+#include <unistd.h>
 #endif
 
 #include <event2/event.h>
@@ -74,6 +77,62 @@ using namespace tr::Values;
 namespace
 {
 auto constexpr UsenetEvictionInterval = 5min;
+
+[[nodiscard]] bool punch_file_hole(std::string_view const path, uint64_t const offset, uint64_t const length, tr_error& error)
+{
+    if (length == 0U)
+    {
+        return true;
+    }
+
+#if defined(HAVE_FALLOCATE64) && defined(FALLOC_FL_PUNCH_HOLE) && defined(FALLOC_FL_KEEP_SIZE)
+    auto fd = tr_sys_file_open(path, TR_SYS_FILE_WRITE, 0, &error);
+    if (fd == TR_BAD_SYS_FILE)
+    {
+        return false;
+    }
+
+    auto const ret = fallocate64(
+        fd,
+        FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+        static_cast<off64_t>(offset),
+        static_cast<off64_t>(length));
+    auto const saved_errno = errno;
+    tr_sys_file_close(fd);
+
+    if (ret == 0)
+    {
+        return true;
+    }
+
+    error.set_from_errno(saved_errno);
+    return false;
+#else
+    error.set(ENOTSUP, "Filesystem hole punching is not supported by this build"sv);
+    return false;
+#endif
+}
+
+[[nodiscard]] bool punch_torrent_piece_holes(tr_torrent const& tor, tr_piece_index_t const piece, tr_error& error)
+{
+    auto [file_index, file_offset] = tor.file_offset(tor.piece_loc(piece));
+    auto const bytes_left = tor.piece_size(piece);
+    auto const bytes_in_file = tor.file_size(file_index) - file_offset;
+    if (bytes_left > bytes_in_file)
+    {
+        error.set(ENOTSUP, "Cross-file Usenet piece eviction is not supported yet"sv);
+        return false;
+    }
+
+    auto const found = tor.find_file(file_index);
+    if (!found)
+    {
+        error.set(ENOENT, fmt::format("Could not find local file '{}'", tor.file_subpath(file_index)));
+        return false;
+    }
+
+    return punch_file_hole(found->filename(), file_offset, bytes_left, error);
+}
 
 struct TempFileGuard
 {
@@ -2421,12 +2480,19 @@ void tr_session::scanUsenetEvictionCandidates()
         return;
     }
 
+    struct Candidate
+    {
+        tr_torrent* tor = nullptr;
+        tr_piece_index_t piece = 0U;
+        uint64_t size = 0U;
+    };
+
     auto const now = static_cast<uint64_t>(tr_time());
     auto const min_age_seconds = static_cast<uint64_t>(settings_.usenet_eviction_min_age_minutes) * 60U;
-    auto eligible_piece_count = size_t{};
+    auto candidates = std::vector<Candidate>{};
     auto eligible_byte_count = uint64_t{};
 
-    for (auto const* const tor : torrents())
+    for (auto* const tor : torrents())
     {
         if (tor == nullptr || !tor->has_metainfo())
         {
@@ -2449,19 +2515,52 @@ void tr_session::scanUsenetEvictionCandidates()
         {
             if (tr_usenet_piece_is_eviction_eligible(manifest->pieces[piece], tor->has_piece(piece), now, min_age_seconds))
             {
-                ++eligible_piece_count;
-                eligible_byte_count += tor->piece_size(piece);
+                auto const size = tor->piece_size(piece);
+                candidates.push_back({ .tor = tor, .piece = piece, .size = size });
+                eligible_byte_count += size;
             }
         }
     }
 
-    if (eligible_piece_count != 0U)
+    if (std::empty(candidates))
     {
-        tr_logAddTrace(
-            fmt::format(
-                "Usenet local piece eviction scan found {} eligible piece(s), {} byte(s)",
-                eligible_piece_count,
-                eligible_byte_count));
+        return;
+    }
+
+    tr_logAddTrace(
+        fmt::format(
+            "Usenet local piece eviction scan found {} eligible piece(s), {} byte(s)",
+            std::size(candidates),
+            eligible_byte_count));
+
+    auto evicted_piece_count = size_t{};
+    auto evicted_byte_count = uint64_t{};
+    for (auto const& candidate : candidates)
+    {
+        if (candidate.tor == nullptr || !candidate.tor->has_piece(candidate.piece))
+        {
+            continue;
+        }
+
+        auto error = tr_error{};
+        if (!punch_torrent_piece_holes(*candidate.tor, candidate.piece, error))
+        {
+            tr_logAddTraceTor(
+                candidate.tor,
+                fmt::format("Skipped Usenet local piece eviction for piece {}: {}", candidate.piece, error.message()));
+            continue;
+        }
+
+        candidate.tor->mark_piece_evicted(candidate.piece);
+        ++evicted_piece_count;
+        evicted_byte_count += candidate.size;
+        tr_logAddTraceTor(candidate.tor, fmt::format("Evicted local Usenet-backed piece {}", candidate.piece));
+    }
+
+    if (evicted_piece_count != 0U)
+    {
+        tr_logAddInfo(
+            fmt::format("Evicted {} Usenet-backed local piece(s), {} byte(s)", evicted_piece_count, evicted_byte_count));
     }
 }
 
@@ -2732,6 +2831,11 @@ void tr_session::onUsenetPieceDownloaded(UsenetDownloadResult result)
             result.task.piece,
             tr_usenet_piece_state::Failed);
         return;
+    }
+
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        (void)usenet_piece_store_->note_piece_local_activity(result.task.info_hash_string, result.task.piece);
     }
 
     tr_logAddTraceTor(tor, fmt::format("Usenet piece {} restored to local data", result.task.piece));

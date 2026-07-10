@@ -2596,6 +2596,18 @@ void tr_torrent::mark_changed()
     return true;
 }
 
+void tr_torrent::mark_piece_evicted(tr_piece_index_t const piece)
+{
+    TR_ASSERT(session->am_in_session_thread());
+    TR_ASSERT(piece < this->piece_count());
+
+    set_has_piece(piece, false);
+    checked_pieces_.set(piece, true);
+    mark_changed();
+    set_dirty();
+    recheck_completeness();
+}
+
 // --- RESUME HELPER
 
 tr_bitfield const& tr_torrent::ResumeHelper::checked_pieces() const noexcept
