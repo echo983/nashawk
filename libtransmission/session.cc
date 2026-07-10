@@ -73,6 +73,8 @@ using namespace tr::Values;
 
 namespace
 {
+auto constexpr UsenetEvictionInterval = 5min;
+
 struct TempFileGuard
 {
     explicit TempFileGuard(std::string path_in)
@@ -873,6 +875,7 @@ void tr_session::initImpl(init_data& data)
         startUsenetIoLimiter();
         startUsenetUploadWorker();
         startUsenetDownloadWorker();
+        startUsenetEvictionTimer();
     }
 
     tr_utp_init(this);
@@ -2286,6 +2289,7 @@ tr_session::tr_session(std::string_view config_dir, tr_variant const& settings_d
     , now_timer_{ timer_maker_->create([this]() { on_now_timer(); }) }
     , queue_timer_{ timer_maker_->create([this]() { on_queue_timer(); }) }
     , save_timer_{ timer_maker_->create([this]() { on_save_timer(); }) }
+    , usenet_eviction_timer_{ timer_maker_->create([this]() { scanUsenetEvictionCandidates(); }) }
 {
     now_timer_->start_repeating(1s);
     queue_timer_->start_repeating(QueueInterval);
@@ -2397,6 +2401,68 @@ size_t tr_session::usenetIoLimit() const
 {
     auto constexpr MaxUsenetIoConcurrency = size_t{ 64U };
     return std::clamp(settings_.usenet_upload_concurrency, size_t{ 1U }, MaxUsenetIoConcurrency);
+}
+
+void tr_session::startUsenetEvictionTimer()
+{
+    if (usenet_piece_store_ == nullptr || !settings_.usenet_eviction_enabled)
+    {
+        return;
+    }
+
+    usenet_eviction_timer_->start_repeating(std::chrono::duration_cast<std::chrono::milliseconds>(UsenetEvictionInterval));
+    scanUsenetEvictionCandidates();
+}
+
+void tr_session::scanUsenetEvictionCandidates()
+{
+    if (usenet_piece_store_ == nullptr || !settings_.usenet_eviction_enabled)
+    {
+        return;
+    }
+
+    auto const now = static_cast<uint64_t>(tr_time());
+    auto const min_age_seconds = static_cast<uint64_t>(settings_.usenet_eviction_min_age_minutes) * 60U;
+    auto eligible_piece_count = size_t{};
+    auto eligible_byte_count = uint64_t{};
+
+    for (auto const* const tor : torrents())
+    {
+        if (tor == nullptr || !tor->has_metainfo())
+        {
+            continue;
+        }
+
+        auto manifest = std::optional<tr_usenet_piece_manifest>{};
+        {
+            auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+            manifest = usenet_piece_store_->load(tor->info_hash_string());
+        }
+
+        if (!manifest)
+        {
+            continue;
+        }
+
+        auto const piece_count = std::min<tr_piece_index_t>(tor->piece_count(), manifest->piece_count());
+        for (tr_piece_index_t piece = 0; piece < piece_count; ++piece)
+        {
+            if (tr_usenet_piece_is_eviction_eligible(manifest->pieces[piece], tor->has_piece(piece), now, min_age_seconds))
+            {
+                ++eligible_piece_count;
+                eligible_byte_count += tor->piece_size(piece);
+            }
+        }
+    }
+
+    if (eligible_piece_count != 0U)
+    {
+        tr_logAddTrace(
+            fmt::format(
+                "Usenet local piece eviction scan found {} eligible piece(s), {} byte(s)",
+                eligible_piece_count,
+                eligible_byte_count));
+    }
 }
 
 void tr_session::startUsenetIoLimiter()
@@ -2877,6 +2943,7 @@ void tr_session::onUsenetPieceUploadFinished(
     if (success)
     {
         tr_logAddTrace(fmt::format("Usenet upload completed for piece {}", piece));
+        scanUsenetEvictionCandidates();
     }
     else
     {

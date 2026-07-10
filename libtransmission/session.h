@@ -1236,6 +1236,8 @@ private:
     [[nodiscard]] bool acquireUsenetIoSlot();
     void releaseUsenetIoSlot();
     [[nodiscard]] size_t usenetIoLimit() const;
+    void startUsenetEvictionTimer();
+    void scanUsenetEvictionCandidates();
 
     std::mutex usenet_io_mutex_;
     std::condition_variable usenet_io_cv_;
@@ -1432,6 +1434,8 @@ private:
 
     // depends-on: torrents_
     std::unique_ptr<tr::Timer> save_timer_;
+
+    std::unique_ptr<tr::Timer> usenet_eviction_timer_;
 
     std::unique_ptr<tr_verify_worker> verifier_ = std::make_unique<tr_verify_worker>();
 
