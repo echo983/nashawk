@@ -2948,6 +2948,7 @@ void tr_session::usenetUploadWorker()
         onUsenetPieceUploadFinished(
             std::move(task.info_hash_string),
             task.piece,
+            std::move(task.message_id),
             std::move(task.temp_file),
             !upload_error,
             upload_error.value_or(std::string{}));
@@ -2963,22 +2964,43 @@ void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t 
 
     auto error = std::optional<std::string>{};
     auto entry = std::optional<tr_usenet_piece_entry>{};
+    auto should_upload = false;
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-        entry = usenet_piece_store_->piece_entry(tor.info_hash_string(), piece);
-        if (entry && entry->state == tr_usenet_piece_state::Available)
+        auto manifest = usenet_piece_store_->load(tor.info_hash_string());
+        if (!manifest || piece >= manifest->piece_count())
         {
-            return;
+            entry = {};
         }
-        if (entry && entry->state == tr_usenet_piece_state::Uploading)
+        else
         {
-            return;
-        }
-
-        error = usenet_piece_store_->set_piece_state(tor.info_hash_string(), piece, tr_usenet_piece_state::Uploading);
-        if (!error)
-        {
-            entry = usenet_piece_store_->piece_entry(tor.info_hash_string(), piece);
+            entry = manifest->pieces[piece];
+            if (manifest->has_message_id_state(entry->message_id, tr_usenet_piece_state::Available))
+            {
+                error = usenet_piece_store_->set_message_id_state(
+                    tor.info_hash_string(),
+                    entry->message_id,
+                    tr_usenet_piece_state::Available);
+            }
+            else if (manifest->has_message_id_state(entry->message_id, tr_usenet_piece_state::Uploading))
+            {
+                error = usenet_piece_store_->set_message_id_state(
+                    tor.info_hash_string(),
+                    entry->message_id,
+                    tr_usenet_piece_state::Uploading);
+            }
+            else if (entry->state != tr_usenet_piece_state::Available && entry->state != tr_usenet_piece_state::Uploading)
+            {
+                error = usenet_piece_store_->set_message_id_state(
+                    tor.info_hash_string(),
+                    entry->message_id,
+                    tr_usenet_piece_state::Uploading);
+                should_upload = !error;
+            }
+            if (!error)
+            {
+                entry = usenet_piece_store_->piece_entry(tor.info_hash_string(), piece);
+            }
         }
     }
 
@@ -2993,6 +3015,11 @@ void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t 
         tr_logAddWarnTor(&tor, fmt::format("Could not find Usenet manifest entry for piece {}", piece));
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
         (void)usenet_piece_store_->set_piece_state(tor.info_hash_string(), piece, tr_usenet_piece_state::Failed);
+        return;
+    }
+
+    if (!should_upload)
+    {
         return;
     }
 
@@ -3020,6 +3047,7 @@ void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t 
 void tr_session::onUsenetPieceUploadFinished(
     std::string info_hash_string,
     tr_piece_index_t const piece,
+    std::string message_id,
     std::string temp_file,
     bool const success,
     std::string error)
@@ -3035,7 +3063,7 @@ void tr_session::onUsenetPieceUploadFinished(
     auto store_error = std::optional<std::string>{};
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-        store_error = usenet_piece_store_->set_piece_state(info_hash_string, piece, state);
+        store_error = usenet_piece_store_->set_message_id_state(info_hash_string, message_id, state);
     }
 
     if (store_error)

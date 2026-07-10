@@ -1043,6 +1043,7 @@ public:
     void onUsenetPieceUploadFinished(
         std::string info_hash_string,
         tr_piece_index_t piece,
+        std::string message_id,
         std::string temp_file,
         bool success,
         std::string error);

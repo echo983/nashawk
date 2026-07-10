@@ -257,6 +257,15 @@ bool tr_usenet_piece_manifest::is_available(tr_piece_index_t const piece) const 
     return has_piece(piece);
 }
 
+bool tr_usenet_piece_manifest::has_message_id_state(std::string_view const message_id, tr_usenet_piece_state const state)
+    const noexcept
+{
+    return std::any_of(
+        std::begin(pieces),
+        std::end(pieces),
+        [message_id, state](auto const& entry) { return entry.message_id == message_id && entry.state == state; });
+}
+
 void tr_usenet_piece_manifest::set_piece_state(tr_piece_index_t const piece, tr_usenet_piece_state const state)
 {
     if (piece < std::size(pieces))
@@ -280,6 +289,17 @@ void tr_usenet_piece_manifest::set_piece_state(tr_piece_index_t const piece, tr_
         }
 
         pieces[piece].state = state;
+    }
+}
+
+void tr_usenet_piece_manifest::set_message_id_state(std::string_view const message_id, tr_usenet_piece_state const state)
+{
+    for (tr_piece_index_t piece = 0U; piece < std::size(pieces); ++piece)
+    {
+        if (pieces[piece].message_id == message_id)
+        {
+            set_piece_state(piece, state);
+        }
     }
 }
 
@@ -339,6 +359,31 @@ std::optional<std::string> tr_usenet_piece_store::set_piece_state(
     }
 
     manifest->set_piece_state(piece, state);
+    if (!save(*manifest))
+    {
+        return "Could not save Usenet piece manifest";
+    }
+
+    return {};
+}
+
+std::optional<std::string> tr_usenet_piece_store::set_message_id_state(
+    std::string_view const info_hash_string,
+    std::string_view const message_id,
+    tr_usenet_piece_state const state) const
+{
+    auto manifest = load(info_hash_string);
+    if (!manifest)
+    {
+        return "Usenet manifest is missing";
+    }
+
+    if (std::empty(message_id))
+    {
+        return "Usenet message id is empty";
+    }
+
+    manifest->set_message_id_state(message_id, state);
     if (!save(*manifest))
     {
         return "Could not save Usenet piece manifest";

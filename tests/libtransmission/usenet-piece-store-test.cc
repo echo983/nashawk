@@ -161,6 +161,31 @@ TEST_F(UsenetPieceStoreTest, setPieceStateUpdatesManifest)
     EXPECT_EQ(tr_usenet_piece_state::Uploading, loaded->pieces[1].state);
 }
 
+TEST_F(UsenetPieceStoreTest, setMessageIdStateUpdatesDuplicatePieces)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+
+    auto manifest = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(manifest);
+    ASSERT_LT(2U, manifest->piece_count());
+
+    auto const message_id = manifest->pieces[0].message_id;
+    manifest->pieces[1].message_id = message_id;
+    manifest->pieces[2].message_id = "other@nashawk.local";
+    ASSERT_TRUE(store.save(*manifest));
+
+    EXPECT_FALSE(store.set_message_id_state(metainfo.info_hash_string(), message_id, tr_usenet_piece_state::Available));
+
+    auto loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(tr_usenet_piece_state::Available, loaded->pieces[0].state);
+    EXPECT_EQ(tr_usenet_piece_state::Available, loaded->pieces[1].state);
+    EXPECT_EQ(tr_usenet_piece_state::Unknown, loaded->pieces[2].state);
+    EXPECT_TRUE(loaded->has_message_id_state(message_id, tr_usenet_piece_state::Available));
+}
+
 TEST_F(UsenetPieceStoreTest, resetInterruptedUploads)
 {
     auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);

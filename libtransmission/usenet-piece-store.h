@@ -43,8 +43,10 @@ struct tr_usenet_piece_manifest
     [[nodiscard]] size_t piece_count() const noexcept;
     [[nodiscard]] bool has_piece(tr_piece_index_t piece) const noexcept;
     [[nodiscard]] bool is_available(tr_piece_index_t piece) const noexcept;
+    [[nodiscard]] bool has_message_id_state(std::string_view message_id, tr_usenet_piece_state state) const noexcept;
 
     void set_piece_state(tr_piece_index_t piece, tr_usenet_piece_state state);
+    void set_message_id_state(std::string_view message_id, tr_usenet_piece_state state);
 };
 
 class tr_usenet_piece_store
@@ -62,6 +64,10 @@ public:
     [[nodiscard]] std::optional<std::string> set_piece_state(
         std::string_view info_hash_string,
         tr_piece_index_t piece,
+        tr_usenet_piece_state state) const;
+    [[nodiscard]] std::optional<std::string> set_message_id_state(
+        std::string_view info_hash_string,
+        std::string_view message_id,
         tr_usenet_piece_state state) const;
     [[nodiscard]] std::optional<std::string> note_piece_local_activity(
         std::string_view info_hash_string,
