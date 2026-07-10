@@ -2342,6 +2342,43 @@ void tr_session::ensureUsenetTorrent(tr_torrent* const tor)
     }
 }
 
+void tr_session::queueUsenetUploadsForLocalPieces(tr_torrent const& tor)
+{
+    if (usenet_piece_store_ == nullptr || !tor.has_metainfo())
+    {
+        return;
+    }
+
+    auto pieces = std::vector<tr_piece_index_t>{};
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        auto const manifest = usenet_piece_store_->load(tor.info_hash_string());
+        if (!manifest)
+        {
+            return;
+        }
+
+        auto const piece_count = std::min<tr_piece_index_t>(tor.piece_count(), manifest->piece_count());
+        for (tr_piece_index_t piece = 0; piece < piece_count; ++piece)
+        {
+            if (manifest->pieces[piece].state == tr_usenet_piece_state::Unknown && tor.has_piece(piece))
+            {
+                pieces.push_back(piece);
+            }
+        }
+    }
+
+    for (auto const piece : pieces)
+    {
+        onUsenetPieceCompleted(tor, piece);
+    }
+
+    if (!std::empty(pieces))
+    {
+        tr_logAddTraceTor(&tor, fmt::format("Queued {} local piece(s) for Usenet upload", std::size(pieces)));
+    }
+}
+
 bool tr_session::hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t const piece)
 {
     if (usenet_piece_store_ == nullptr || !tor.has_metainfo())

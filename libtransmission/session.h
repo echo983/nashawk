@@ -1035,6 +1035,7 @@ public:
 
     void addTorrent(tr_torrent* tor);
     void ensureUsenetTorrent(tr_torrent* tor);
+    void queueUsenetUploadsForLocalPieces(tr_torrent const& tor);
     [[nodiscard]] bool hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
     void addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield);
     void fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);

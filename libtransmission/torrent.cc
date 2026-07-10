@@ -950,6 +950,7 @@ void tr_torrent::init(tr_ctor const& ctor)
     }
 
     completeness_ = completion_.status();
+    session->queueUsenetUploadsForLocalPieces(*this);
 
     ctor.init_torrent_priorities(*this);
     ctor.init_torrent_wanted(*this);
