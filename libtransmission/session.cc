@@ -2325,6 +2325,42 @@ void tr_session::ensureUsenetTorrent(tr_torrent* const tor)
     }
 }
 
+bool tr_session::hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t const piece)
+{
+    if (usenet_piece_store_ == nullptr || !tor.has_metainfo())
+    {
+        return false;
+    }
+
+    auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+    auto const entry = usenet_piece_store_->piece_entry(tor.info_hash_string(), piece);
+    return entry && entry->state == tr_usenet_piece_state::Available;
+}
+
+void tr_session::addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield)
+{
+    if (usenet_piece_store_ == nullptr || !tor.has_metainfo())
+    {
+        return;
+    }
+
+    auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+    auto const manifest = usenet_piece_store_->load(tor.info_hash_string());
+    if (!manifest)
+    {
+        return;
+    }
+
+    auto const piece_count = std::min<tr_piece_index_t>(tor.piece_count(), manifest->piece_count());
+    for (tr_piece_index_t piece = 0; piece < piece_count; ++piece)
+    {
+        if (manifest->is_available(piece))
+        {
+            bitfield[piece / 8U] |= static_cast<uint8_t>(uint8_t{ 0x80U } >> (piece % 8U));
+        }
+    }
+}
+
 void tr_session::startUsenetUploadWorker()
 {
     if (usenet_upload_thread_ != nullptr)

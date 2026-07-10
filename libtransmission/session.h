@@ -1035,6 +1035,8 @@ public:
 
     void addTorrent(tr_torrent* tor);
     void ensureUsenetTorrent(tr_torrent* tor);
+    [[nodiscard]] bool hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
+    void addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield);
     void onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t piece);
     void onUsenetPieceUploadFinished(std::string info_hash_string, tr_piece_index_t piece, std::string temp_file, bool success, std::string error);
 
