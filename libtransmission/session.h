@@ -1242,7 +1242,7 @@ private:
     std::mutex usenet_upload_mutex_;
     std::condition_variable usenet_upload_cv_;
     std::deque<UsenetUploadTask> usenet_upload_queue_;
-    std::unique_ptr<std::thread> usenet_upload_thread_;
+    std::vector<std::thread> usenet_upload_threads_;
     bool usenet_upload_stopping_ = false;
 
     struct UsenetDownloadTask

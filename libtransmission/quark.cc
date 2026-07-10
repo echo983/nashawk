@@ -724,6 +724,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "usenet_cache_size_mib"sv, // tr_session::Settings
     "usenet_check_article_size"sv, // tr_session::Settings
     "usenet_enabled"sv, // tr_session::Settings
+    "usenet_upload_concurrency"sv, // tr_session::Settings
     "ut_holepunch"sv, // BT protocol
     "ut_metadata"sv, // BEP0011; BT protocol
     "ut_pex"sv, // BEP0010, BEP0011; BT protocol

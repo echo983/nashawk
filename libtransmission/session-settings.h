@@ -120,6 +120,7 @@ public:
     size_t upload_slots_per_torrent = 8U;
     size_t usenet_cache_size_mib = 1024U;
     size_t usenet_check_article_size = 1024U * 1024U;
+    size_t usenet_upload_concurrency = 4U;
     small::max_size_vector<tr_preferred_transport, PreferredTransportCount> preferred_transports = {
         tr_preferred_transport::UTP,
         tr_preferred_transport::TCP,
@@ -225,6 +226,7 @@ public:
         Field<&SessionSettings::usenet_cache_size_mib>{ TR_KEY_usenet_cache_size_mib },
         Field<&SessionSettings::usenet_check_article_size>{ TR_KEY_usenet_check_article_size },
         Field<&SessionSettings::usenet_enabled>{ TR_KEY_usenet_enabled },
+        Field<&SessionSettings::usenet_upload_concurrency>{ TR_KEY_usenet_upload_concurrency },
         Field<&SessionSettings::utp_enabled>{ TR_KEY_utp_enabled });
 };
 

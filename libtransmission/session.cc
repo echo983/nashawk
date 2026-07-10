@@ -2567,13 +2567,22 @@ void tr_session::onUsenetPieceDownloaded(UsenetDownloadResult result)
 
 void tr_session::startUsenetUploadWorker()
 {
-    if (usenet_upload_thread_ != nullptr)
+    if (!std::empty(usenet_upload_threads_))
     {
         return;
     }
 
+    auto constexpr MaxUploadConcurrency = size_t{ 64U };
+    auto const upload_concurrency = std::clamp(settings_.usenet_upload_concurrency, size_t{ 1U }, MaxUploadConcurrency);
+
     usenet_upload_stopping_ = false;
-    usenet_upload_thread_ = std::make_unique<std::thread>(&tr_session::usenetUploadWorker, this);
+    usenet_upload_threads_.reserve(upload_concurrency);
+    for (size_t i = 0; i < upload_concurrency; ++i)
+    {
+        usenet_upload_threads_.emplace_back(&tr_session::usenetUploadWorker, this);
+    }
+
+    tr_logAddInfo(fmt::format("Started {} Usenet upload worker(s)", upload_concurrency));
 }
 
 void tr_session::stopUsenetUploadWorker()
@@ -2582,14 +2591,17 @@ void tr_session::stopUsenetUploadWorker()
         auto lock = std::lock_guard{ usenet_upload_mutex_ };
         usenet_upload_stopping_ = true;
     }
-    usenet_upload_cv_.notify_one();
+    usenet_upload_cv_.notify_all();
 
-    if (usenet_upload_thread_ != nullptr && usenet_upload_thread_->joinable())
+    for (auto& thread : usenet_upload_threads_)
     {
-        usenet_upload_thread_->join();
+        if (thread.joinable())
+        {
+            thread.join();
+        }
     }
 
-    usenet_upload_thread_.reset();
+    usenet_upload_threads_.clear();
 
     auto queue = std::deque<UsenetUploadTask>{};
     {
@@ -2668,6 +2680,10 @@ void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t 
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
         entry = usenet_piece_store_->piece_entry(tor.info_hash_string(), piece);
         if (entry && entry->state == tr_usenet_piece_state::Available)
+        {
+            return;
+        }
+        if (entry && entry->state == tr_usenet_piece_state::Uploading)
         {
             return;
         }

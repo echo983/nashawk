@@ -735,6 +735,7 @@ enum // NOLINT(performance-enum-size)
     TR_KEY_usenet_cache_size_mib,
     TR_KEY_usenet_check_article_size,
     TR_KEY_usenet_enabled,
+    TR_KEY_usenet_upload_concurrency,
     TR_KEY_ut_holepunch,
     TR_KEY_ut_metadata,
     TR_KEY_ut_pex,

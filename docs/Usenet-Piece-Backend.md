@@ -16,6 +16,10 @@ Initial switches:
 
 - `usenet-enabled` in settings
 - `--usenet-enabled` for `transmission-daemon`
+- `usenet-upload-concurrency` in settings
+- `--usenet-upload-concurrency <count>` for `transmission-daemon`
+
+Upload concurrency defaults to 4 workers and is clamped to the local safety range 1-64. Operators can raise it to match their provider account, for example 40 concurrent upload workers on a server plan that permits 40 NNTP connections.
 
 When enabled, startup must fail fast if the Usenet backend cannot be used. Required checks:
 
