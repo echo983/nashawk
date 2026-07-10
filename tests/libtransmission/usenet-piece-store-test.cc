@@ -46,6 +46,28 @@ TEST_F(UsenetPieceStoreTest, stateNamesRoundtrip)
     EXPECT_FALSE(tr_usenet_piece_state_from_name("not-a-state"sv));
 }
 
+TEST_F(UsenetPieceStoreTest, evictionEligibilityRequiresAvailableLocalOldPiece)
+{
+    auto entry = tr_usenet_piece_entry{
+        .state = tr_usenet_piece_state::Available,
+        .available_at = 100U,
+        .last_local_at = 100U,
+        .message_id = "piece@nashawk.local",
+    };
+
+    EXPECT_TRUE(tr_usenet_piece_is_eviction_eligible(entry, true, 200U, 60U));
+    EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, false, 200U, 60U));
+    EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 120U, 60U));
+    EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 99U, 60U));
+
+    entry.available_at = 0U;
+    EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 200U, 60U));
+
+    entry.available_at = 100U;
+    entry.state = tr_usenet_piece_state::Uploading;
+    EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 200U, 60U));
+}
+
 TEST_F(UsenetPieceStoreTest, ensureTorrentCreatesManifest)
 {
     auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);

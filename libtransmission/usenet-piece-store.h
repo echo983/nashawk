@@ -84,3 +84,8 @@ private:
 
 [[nodiscard]] std::string_view tr_usenet_piece_state_name(tr_usenet_piece_state state) noexcept;
 [[nodiscard]] std::optional<tr_usenet_piece_state> tr_usenet_piece_state_from_name(std::string_view name) noexcept;
+[[nodiscard]] bool tr_usenet_piece_is_eviction_eligible(
+    tr_usenet_piece_entry const& entry,
+    bool has_local_piece,
+    uint64_t now_seconds,
+    uint64_t min_age_seconds) noexcept;

@@ -227,6 +227,20 @@ std::optional<tr_usenet_piece_state> tr_usenet_piece_state_from_name(std::string
     return {};
 }
 
+bool tr_usenet_piece_is_eviction_eligible(
+    tr_usenet_piece_entry const& entry,
+    bool const has_local_piece,
+    uint64_t const now_seconds,
+    uint64_t const min_age_seconds) noexcept
+{
+    if (!has_local_piece || entry.state != tr_usenet_piece_state::Available || entry.available_at == 0U)
+    {
+        return false;
+    }
+
+    return now_seconds >= entry.available_at && now_seconds - entry.available_at >= min_age_seconds;
+}
+
 size_t tr_usenet_piece_manifest::piece_count() const noexcept
 {
     return std::size(pieces);
