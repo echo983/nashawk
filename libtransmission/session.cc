@@ -37,6 +37,7 @@
 #include "libtransmission/crypto-utils.h"
 #include "libtransmission/file-utils.h"
 #include "libtransmission/file.h"
+#include "libtransmission/inout.h"
 #include "libtransmission/ip-cache.h"
 #include "libtransmission/interned-string.h"
 #include "libtransmission/log.h"
@@ -54,6 +55,7 @@
 #include "libtransmission/torrent.h"
 #include "libtransmission/torrent-ctor.h"
 #include "libtransmission/usenet-piece-store.h"
+#include "libtransmission/usenet-service.h"
 #include "libtransmission/tr-assert.h"
 #include "libtransmission/tr-dht.h"
 #include "libtransmission/tr-lpd.h"
@@ -71,6 +73,102 @@ using namespace tr::Values;
 
 namespace
 {
+struct TempFileGuard
+{
+    explicit TempFileGuard(std::string path_in)
+        : path{ std::move(path_in) }
+    {
+    }
+
+    TempFileGuard(TempFileGuard const&) = delete;
+    TempFileGuard& operator=(TempFileGuard const&) = delete;
+
+    ~TempFileGuard()
+    {
+        if (!std::empty(path))
+        {
+            tr_sys_path_remove(path);
+        }
+    }
+
+    [[nodiscard]] std::string release()
+    {
+        return std::exchange(path, {});
+    }
+
+    std::string path;
+};
+
+[[nodiscard]] std::string usenet_temp_dir(std::string_view config_dir)
+{
+    return std::string{ tr_pathbuf{ config_dir, "/usenet-upload-temp"sv }.sv() };
+}
+
+[[nodiscard]] std::optional<std::string> write_piece_to_temp_file(
+    tr_torrent const& tor,
+    tr_piece_index_t const piece,
+    std::string_view const config_dir,
+    std::string& filename)
+{
+    auto const dir = usenet_temp_dir(config_dir);
+    if (auto error = tr_error{}; !tr_sys_dir_create(dir, TR_SYS_DIR_CREATE_PARENTS, 0700, &error))
+    {
+        return fmt::format("Could not create Usenet upload temp dir: {}", error.message());
+    }
+
+    auto path = std::string{ tr_pathbuf{ dir, "/piece.XXXXXX"sv }.sv() };
+    auto error = tr_error{};
+    auto fd = tr_sys_file_open_temp(std::data(path), &error);
+    if (fd == TR_BAD_SYS_FILE)
+    {
+        return fmt::format("Could not create Usenet upload temp file: {}", error.message());
+    }
+
+    auto guard = TempFileGuard{ path };
+    auto buffer = std::array<uint8_t, tr_block_info::BlockSize>{};
+    auto& open_files = tor.session->openFiles();
+
+    auto const [begin_byte, end_byte] = tor.block_info().byte_span_for_piece(piece);
+    auto const [begin_block, end_block] = tor.block_span_for_piece(piece);
+    auto n_bytes_written = uint64_t{};
+
+    for (auto block = begin_block; block < end_block; ++block)
+    {
+        auto const block_loc = tor.block_loc(block);
+        auto const block_len = tor.block_size(block);
+        auto contents = std::span{ std::data(buffer), block_len };
+        if (tr_ioRead(tor, open_files, block_loc, contents) != 0)
+        {
+            tr_sys_file_close(fd);
+            return "Could not read completed piece for Usenet upload";
+        }
+
+        auto const start = std::max(begin_byte, block_loc.byte);
+        auto const end = std::min(end_byte, block_loc.byte + block_len);
+        auto const piece_data = contents.subspan(start - block_loc.byte, static_cast<size_t>(end - start));
+
+        auto bytes_written = uint64_t{};
+        if (!tr_sys_file_write(fd, std::data(piece_data), std::size(piece_data), &bytes_written, &error) ||
+            bytes_written != std::size(piece_data))
+        {
+            tr_sys_file_close(fd);
+            return fmt::format("Could not write Usenet upload temp file: {}", error.message());
+        }
+
+        n_bytes_written += bytes_written;
+    }
+
+    tr_sys_file_close(fd);
+
+    if (n_bytes_written != tor.piece_size(piece))
+    {
+        return fmt::format("Usenet upload temp file has wrong size: {}", n_bytes_written);
+    }
+
+    filename = guard.release();
+    return {};
+}
+
 namespace bandwidth_group_helpers
 {
 auto constexpr BandwidthGroupsFilename = "bandwidth-groups.json"sv;
@@ -772,6 +870,7 @@ void tr_session::initImpl(init_data& data)
     if (settings_.usenet_enabled)
     {
         usenet_piece_store_ = std::make_unique<tr_usenet_piece_store>(config_dir_, settings_.usenet_check_article_size);
+        startUsenetUploadWorker();
     }
 
     tr_utp_init(this);
@@ -1401,6 +1500,7 @@ double tr_sessionGetRawSpeed_KBps(tr_session const* session, tr_direction dir)
 void tr_session::closeImplPart1(std::promise<void>* closed_promise, std::chrono::time_point<std::chrono::steady_clock> deadline)
 {
     is_closing_ = true;
+    stopUsenetUploadWorker();
 
     // close the low-hanging fruit that can be closed immediately w/o consequences
     utp_timer.reset();
@@ -2210,12 +2310,108 @@ void tr_session::ensureUsenetTorrent(tr_torrent* const tor)
         return;
     }
 
-    if (auto error = usenet_piece_store_->ensure_torrent(tor->metainfo()); error)
+    auto error = std::optional<std::string>{};
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        error = usenet_piece_store_->ensure_torrent(tor->metainfo());
+    }
+
+    if (error)
     {
         auto const message = *error;
         tr_logAddErrorTor(tor, std::move(*error));
         tor->error().set_local_error(message);
         tr_torrentStop(tor);
+    }
+}
+
+void tr_session::startUsenetUploadWorker()
+{
+    if (usenet_upload_thread_ != nullptr)
+    {
+        return;
+    }
+
+    usenet_upload_stopping_ = false;
+    usenet_upload_thread_ = std::make_unique<std::thread>(&tr_session::usenetUploadWorker, this);
+}
+
+void tr_session::stopUsenetUploadWorker()
+{
+    {
+        auto lock = std::lock_guard{ usenet_upload_mutex_ };
+        usenet_upload_stopping_ = true;
+    }
+    usenet_upload_cv_.notify_one();
+
+    if (usenet_upload_thread_ != nullptr && usenet_upload_thread_->joinable())
+    {
+        usenet_upload_thread_->join();
+    }
+
+    usenet_upload_thread_.reset();
+
+    auto queue = std::deque<UsenetUploadTask>{};
+    {
+        auto lock = std::lock_guard{ usenet_upload_mutex_ };
+        queue.swap(usenet_upload_queue_);
+    }
+
+    for (auto const& task : queue)
+    {
+        tr_sys_path_remove(task.temp_file);
+    }
+}
+
+void tr_session::enqueueUsenetUploadTask(UsenetUploadTask task)
+{
+    {
+        auto lock = std::lock_guard{ usenet_upload_mutex_ };
+        if (usenet_upload_stopping_)
+        {
+            tr_sys_path_remove(task.temp_file);
+            return;
+        }
+
+        usenet_upload_queue_.push_back(std::move(task));
+    }
+
+    usenet_upload_cv_.notify_one();
+}
+
+void tr_session::usenetUploadWorker()
+{
+    for (;;)
+    {
+        auto task = UsenetUploadTask{};
+        {
+            auto lock = std::unique_lock{ usenet_upload_mutex_ };
+            usenet_upload_cv_.wait(lock, [this]() { return usenet_upload_stopping_ || !std::empty(usenet_upload_queue_); });
+
+            if (usenet_upload_stopping_)
+            {
+                return;
+            }
+
+            task = std::move(usenet_upload_queue_.front());
+            usenet_upload_queue_.pop_front();
+        }
+
+        auto const upload_error = tr_usenet_upload_file({
+            .config_dir = config_dir_,
+            .file_path = task.temp_file,
+            .message_id = task.message_id,
+            .subject = fmt::format("Nashawk piece {}", task.message_id),
+            .yenc_name = fmt::format("{}.piece", task.message_id.substr(0, task.message_id.find('@'))),
+            .article_size = task.article_size,
+        });
+
+        onUsenetPieceUploadFinished(
+            std::move(task.info_hash_string),
+            task.piece,
+            std::move(task.temp_file),
+            !upload_error,
+            upload_error.value_or(std::string{}));
     }
 }
 
@@ -2226,11 +2422,84 @@ void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t 
         return;
     }
 
-    if (auto error = usenet_piece_store_->set_piece_state(tor.info_hash_string(), piece, tr_usenet_piece_state::Uploading); error)
+    auto error = std::optional<std::string>{};
+    auto entry = std::optional<tr_usenet_piece_entry>{};
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        error = usenet_piece_store_->set_piece_state(tor.info_hash_string(), piece, tr_usenet_piece_state::Uploading);
+        if (!error)
+        {
+            entry = usenet_piece_store_->piece_entry(tor.info_hash_string(), piece);
+        }
+    }
+
+    if (error)
     {
         tr_logAddWarnTor(&tor, fmt::format("Could not queue piece {} for Usenet upload: {}", piece, *error));
         return;
     }
 
+    if (!entry)
+    {
+        tr_logAddWarnTor(&tor, fmt::format("Could not find Usenet manifest entry for piece {}", piece));
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        (void)usenet_piece_store_->set_piece_state(tor.info_hash_string(), piece, tr_usenet_piece_state::Failed);
+        return;
+    }
+
+    auto temp_file = std::string{};
+    if (auto write_error = write_piece_to_temp_file(tor, piece, config_dir_, temp_file); write_error)
+    {
+        tr_logAddWarnTor(&tor, fmt::format("Could not stage piece {} for Usenet upload: {}", piece, *write_error));
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        (void)usenet_piece_store_->set_piece_state(tor.info_hash_string(), piece, tr_usenet_piece_state::Failed);
+        return;
+    }
+
+    enqueueUsenetUploadTask({
+        .info_hash_string = std::string{ tor.info_hash_string() },
+        .piece = piece,
+        .message_id = entry->message_id,
+        .temp_file = std::move(temp_file),
+        .article_size = tor.piece_size(piece),
+    });
+
     tr_logAddTraceTor(&tor, fmt::format("Queued piece {} for Usenet upload", piece));
+}
+
+void tr_session::onUsenetPieceUploadFinished(
+    std::string info_hash_string,
+    tr_piece_index_t const piece,
+    std::string temp_file,
+    bool const success,
+    std::string error)
+{
+    tr_sys_path_remove(temp_file);
+
+    if (usenet_piece_store_ == nullptr)
+    {
+        return;
+    }
+
+    auto const state = success ? tr_usenet_piece_state::Available : tr_usenet_piece_state::Failed;
+    auto store_error = std::optional<std::string>{};
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        store_error = usenet_piece_store_->set_piece_state(info_hash_string, piece, state);
+    }
+
+    if (store_error)
+    {
+        tr_logAddWarn(fmt::format("Could not update Usenet upload state for piece {}: {}", piece, *store_error));
+        return;
+    }
+
+    if (success)
+    {
+        tr_logAddTrace(fmt::format("Usenet upload completed for piece {}", piece));
+    }
+    else
+    {
+        tr_logAddWarn(fmt::format("Usenet upload failed for piece {}: {}", piece, error));
+    }
 }

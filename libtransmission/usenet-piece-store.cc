@@ -278,6 +278,19 @@ std::optional<std::string> tr_usenet_piece_store::set_piece_state(
     return {};
 }
 
+std::optional<tr_usenet_piece_entry> tr_usenet_piece_store::piece_entry(
+    std::string_view const info_hash_string,
+    tr_piece_index_t const piece) const
+{
+    auto const manifest = load(info_hash_string);
+    if (!manifest || piece >= manifest->piece_count())
+    {
+        return {};
+    }
+
+    return manifest->pieces[piece];
+}
+
 std::optional<tr_usenet_piece_manifest> tr_usenet_piece_store::load(std::string_view const info_hash_string) const
 {
     auto const filename = manifest_path(info_hash_string);

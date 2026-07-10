@@ -89,6 +89,21 @@ TEST_F(UsenetPieceStoreTest, setPieceStateUpdatesManifest)
     EXPECT_EQ(tr_usenet_piece_state::Uploading, loaded->pieces[1].state);
 }
 
+TEST_F(UsenetPieceStoreTest, pieceEntryLoadsSinglePiece)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+
+    auto entry = store.piece_entry(metainfo.info_hash_string(), 2);
+    ASSERT_TRUE(entry);
+    EXPECT_EQ(tr_usenet_piece_state::Unknown, entry->state);
+    EXPECT_EQ(fmt::format("{}@nashawk.local", tr_sha1_to_string(metainfo.piece_hash(2))), entry->message_id);
+
+    EXPECT_FALSE(store.piece_entry(metainfo.info_hash_string(), metainfo.piece_count()));
+    EXPECT_FALSE(store.piece_entry("0123456789012345678901234567890123456789"sv, 0));
+}
+
 TEST_F(UsenetPieceStoreTest, setPieceStateRejectsMissingManifest)
 {
     auto store = tr_usenet_piece_store{ sandboxDir(), 1U };

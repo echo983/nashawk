@@ -14,9 +14,11 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef> // size_t
 #include <cstdint> // uintX_t
 #include <ctime> // time_t
+#include <deque>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -24,6 +26,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <tuple>
 #include <utility> // for std::pair
 #include <vector>
@@ -1033,6 +1036,7 @@ public:
     void addTorrent(tr_torrent* tor);
     void ensureUsenetTorrent(tr_torrent* tor);
     void onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t piece);
+    void onUsenetPieceUploadFinished(std::string info_hash_string, tr_piece_index_t piece, std::string temp_file, bool success, std::string error);
 
     // NOLINTNEXTLINE(readability-make-member-function-const)
     void maybe_add_dht_node(tr_address const& addr, tr_port port)
@@ -1216,6 +1220,27 @@ private:
     // depends-on: session_thread_
     std::unique_ptr<tr::TimerMaker> const timer_maker_;
     std::unique_ptr<tr_usenet_piece_store> usenet_piece_store_;
+    std::mutex usenet_piece_store_mutex_;
+
+    struct UsenetUploadTask
+    {
+        std::string info_hash_string;
+        tr_piece_index_t piece = 0U;
+        std::string message_id;
+        std::string temp_file;
+        uint64_t article_size = 0U;
+    };
+
+    void startUsenetUploadWorker();
+    void stopUsenetUploadWorker();
+    void enqueueUsenetUploadTask(UsenetUploadTask task);
+    void usenetUploadWorker();
+
+    std::mutex usenet_upload_mutex_;
+    std::condition_variable usenet_upload_cv_;
+    std::deque<UsenetUploadTask> usenet_upload_queue_;
+    std::unique_ptr<std::thread> usenet_upload_thread_;
+    bool usenet_upload_stopping_ = false;
 
     /// trivial type fields
 
