@@ -22,11 +22,12 @@ Validated paths:
 - on-demand Usenet fetch when a peer requests a missing local piece
 - yEnc decode and piece hash verification before recovered data is served
 - recovery after daemon restart for interrupted uploads
-- configurable upload worker count
+- configurable shared Usenet IO limit
 
 Current limits:
 
-- Usenet downloads use one worker.
+- Usenet downloads use one worker and share the configured Usenet IO limit with
+  uploads.
 - Restored pieces are written back into the torrent data path and are not yet
   managed by a bounded cache eviction policy.
 - The first request for a cold Usenet-only piece can be rejected while the
@@ -101,7 +102,7 @@ USENET_GROUP=alt.binaries.example
 
 `.env` and `.env.*` are ignored by git. Do not commit real credentials.
 
-`USENET_CONNECTIONS` may exist in `.env`, but daemon upload concurrency is
+`USENET_CONNECTIONS` may exist in `.env`, but daemon Usenet IO concurrency is
 controlled by Nashawk's own setting or CLI flag.
 
 ## Daemon Options
@@ -118,13 +119,16 @@ Validate a provider article size at startup:
 transmission-daemon --usenet-enabled --usenet-check-article-size 262144
 ```
 
-Configure concurrent uploads:
+Configure the shared Usenet upload/download IO limit:
 
 ```sh
 transmission-daemon --usenet-enabled --usenet-upload-concurrency 40
 ```
 
-Upload concurrency defaults to 4 and is clamped to 1 through 64.
+The shared Usenet IO limit defaults to 4 and is clamped to 1 through 64. Upload
+workers and the download worker must acquire a slot from this same limit before
+opening Usenet IO, so a setting of 40 will not create more than 40 concurrent
+Usenet operations.
 
 The equivalent settings keys are:
 
@@ -199,8 +203,8 @@ in the torrent data path until removed by an operator or a future cache policy.
 - Use a Usenet provider account that explicitly permits posting.
 - Set `usenet_check_article_size` to the maximum BitTorrent piece size you
   intend this node to support.
-- Use `--usenet-upload-concurrency` conservatively unless the provider account
-  permits many simultaneous NNTP connections.
+- Use `--usenet-upload-concurrency` conservatively and keep it at or below the
+  provider account's simultaneous NNTP connection limit.
 - Keep `.env` permissions restrictive, for example `0600`.
 - Back up `<config-dir>/usenet-pieces/`; without manifests, the node does not
   know which message-ids correspond to torrent pieces.
