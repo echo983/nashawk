@@ -1,5 +1,13 @@
 # Usenet Piece Backend
 
+Status: Archived.
+
+This design document captured the initial Usenet-backed piece storage design.
+The first implementation has been completed and validated. Use
+`docs/Usenet-Piece-Backend-README.md` for current operator-facing behavior and
+configuration. Remaining future work is tracked as follow-up implementation
+work, not in this archived design.
+
 This document describes the initial design for Nashawk's optional Usenet-backed piece storage mode.
 
 ## Goal

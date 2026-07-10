@@ -1,5 +1,16 @@
 # Usenet Local Piece Eviction Plan
 
+Status: Archived.
+
+This plan has been implemented for the first conservative local piece eviction
+pass. The current implementation can evict Usenet-available local pieces with
+hole punching, preserve peer-facing Usenet availability, and restore evicted
+pieces from Usenet on peer demand. Use `docs/Usenet-Piece-Backend-README.md`
+for current operator-facing configuration and limits.
+
+Known follow-up work: cross-file piece eviction, full size-pressure/LRU policy,
+UI controls, and automated end-to-end Usenet tests.
+
 This plan defines the first automatic local-piece eviction pass for Nashawk's
 Usenet-backed piece storage mode.
 

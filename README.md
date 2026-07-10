@@ -13,6 +13,17 @@ Visit https://transmissionbt.com/ for more information.
 
 [Transmission's documentation](docs/README.md) is currently out-of-date, but the team has recently begun a new project to update it and is looking for volunteers. If you're interested, please feel free to submit pull requests!
 
+### Nashawk Usenet piece backend
+
+Nashawk adds an experimental Usenet-backed piece storage mode for
+`transmission-daemon`. When enabled, verified BitTorrent pieces can be uploaded
+as one yEnc Usenet article per piece, later restored on demand, and optionally
+evicted from local torrent files to reduce disk usage on storage-constrained
+hosts.
+
+Start with [Nashawk Usenet piece backend](docs/Usenet-Piece-Backend-README.md)
+for setup, safety notes, daemon flags, and validation steps.
+
 ## Command line interface notes
 
 Transmission is fully supported in transmission-remote, the preferred cli client.

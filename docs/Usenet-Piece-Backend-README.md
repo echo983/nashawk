@@ -11,7 +11,9 @@ Transmission behavior.
 
 ## Status
 
-This backend is functional but experimental.
+This backend is functional but experimental. The first implementation has been
+validated with local two-daemon BitTorrent tests and real Usenet upload/read
+paths.
 
 Validated paths:
 
@@ -23,15 +25,25 @@ Validated paths:
 - yEnc decode and piece hash verification before recovered data is served
 - recovery after daemon restart for interrupted uploads
 - configurable shared Usenet IO limit
+- duplicate-content pieces sharing the same deterministic message-id are
+  coalesced instead of uploaded repeatedly
+- automatic local piece eviction for Usenet-available pieces
+- peer-triggered restore of evicted local pieces from Usenet
 
 Current limits:
 
 - Usenet downloads use one worker and share the configured Usenet IO limit with
   uploads.
-- Restored pieces are written back into the torrent data path and are not yet
-  managed by a bounded cache eviction policy.
+- Restored pieces are written back into the torrent data path. They can be
+  evicted again after the configured minimum age when local eviction is enabled.
 - The first request for a cold Usenet-only piece can be rejected while the
   piece is fetched; peers should retry.
+- The first local eviction implementation uses hole punching and currently
+  skips pieces that span multiple files or filesystems that do not support
+  punching sparse holes.
+- `usenet_cache_size_mib` is present, but the current implemented eviction pass
+  is conservative and age-driven; full size-pressure/LRU policy remains future
+  work.
 - End-to-end Usenet tests are currently manual, not CI automation.
 - Windows startup support for this mode is not implemented.
 
@@ -208,12 +220,14 @@ If fetch, decode, write, or hash verification fails, the piece is not served.
 
 ## Deleting Local Data
 
-After pieces have been uploaded and marked `available`, the local data file may
-be removed. A later verify will show the torrent as locally incomplete, but the
-node can still advertise and serve pieces backed by the Usenet manifest.
+After pieces have been uploaded and marked `available`, local data may be
+removed either manually or by enabling the local eviction policy. A later verify
+will show the torrent as locally incomplete, but the node can still advertise
+and serve pieces backed by the Usenet manifest.
 
 On demand, missing local pieces are restored from Usenet. Restored pieces remain
-in the torrent data path until removed by an operator or a future cache policy.
+in the torrent data path until removed by an operator or by a later eviction
+pass after the configured minimum age.
 
 ## Operational Notes
 
@@ -319,3 +333,4 @@ fetch; once the piece is restored, peer retries can be served.
 
 - [Usenet Piece Backend Design](./Usenet-Piece-Backend.md)
 - [Usenet Piece Backend Implementation Plan](./Usenet-Piece-Backend-Plan.md)
+- [Usenet Local Piece Eviction Plan](./Usenet-Local-Piece-Eviction-Plan.md)

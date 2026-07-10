@@ -32,7 +32,9 @@ Much of this documentation is out-of-date or could be improved. Pull requests ar
  * [Transmission's Peer ID and User-Agent headers](Peer-ID-and-User-Agent.md)
  * [Peer status text explained](Peer-Status-Text.md)
  * [Nashawk Usenet piece backend](Usenet-Piece-Backend-README.md)
- * [Nashawk Usenet local piece eviction plan](Usenet-Local-Piece-Eviction-Plan.md)
+ * [Nashawk Usenet piece backend design archive](Usenet-Piece-Backend.md)
+ * [Nashawk Usenet implementation plan archive](Usenet-Piece-Backend-Plan.md)
+ * [Nashawk Usenet local piece eviction plan archive](Usenet-Local-Piece-Eviction-Plan.md)
  * [Securing Transmission's RPC interface with an open-source reverse proxy (External Link)](https://www.pomerium.com/docs/guides/transmission)
 
 # 3. Report a problem / request a feature #
