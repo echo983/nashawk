@@ -6,6 +6,7 @@
 #include "libtransmission/usenet-piece-store.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -25,6 +26,16 @@ using namespace std::literals;
 namespace
 {
 auto constexpr Domain = "nashawk.local"sv;
+
+[[nodiscard]] tr_quark key_available_at()
+{
+    return tr_quark_new("available_at"sv);
+}
+
+[[nodiscard]] tr_quark key_last_local_at()
+{
+    return tr_quark_new("last_local_at"sv);
+}
 
 [[nodiscard]] tr_quark key_max_article_size()
 {
@@ -48,6 +59,12 @@ auto constexpr Domain = "nashawk.local"sv;
     return fmt::format("{}@{}", tr_sha1_to_string(piece_hash), Domain);
 }
 
+[[nodiscard]] uint64_t now_seconds()
+{
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
 [[nodiscard]] tr_variant manifest_to_variant(tr_usenet_piece_manifest const& manifest)
 {
     auto top = tr_variant::Map{ 6U };
@@ -61,9 +78,17 @@ auto constexpr Domain = "nashawk.local"sv;
     pieces.reserve(std::size(manifest.pieces));
     for (auto const& piece : manifest.pieces)
     {
-        auto entry = tr_variant::Map{ 2U };
+        auto entry = tr_variant::Map{ 4U };
         entry.try_emplace(TR_KEY_status, tr_variant::unmanaged_string(tr_usenet_piece_state_name(piece.state)));
         entry.try_emplace(key_message_id(), piece.message_id);
+        if (piece.available_at != 0U)
+        {
+            entry.try_emplace(key_available_at(), static_cast<int64_t>(piece.available_at));
+        }
+        if (piece.last_local_at != 0U)
+        {
+            entry.try_emplace(key_last_local_at(), static_cast<int64_t>(piece.last_local_at));
+        }
         pieces.emplace_back(std::move(entry));
     }
     top.try_emplace(TR_KEY_pieces, std::move(pieces));
@@ -133,6 +158,16 @@ auto constexpr Domain = "nashawk.local"sv;
         if (auto const message_id = entry->value_if<std::string_view>(key_message_id()); message_id)
         {
             piece.message_id = *message_id;
+        }
+
+        if (auto const available_at = entry->value_if<int64_t>(key_available_at()); available_at && *available_at > 0)
+        {
+            piece.available_at = static_cast<uint64_t>(*available_at);
+        }
+
+        if (auto const last_local_at = entry->value_if<int64_t>(key_last_local_at()); last_local_at && *last_local_at > 0)
+        {
+            piece.last_local_at = static_cast<uint64_t>(*last_local_at);
         }
 
         if (std::empty(piece.message_id))
@@ -211,6 +246,24 @@ void tr_usenet_piece_manifest::set_piece_state(tr_piece_index_t const piece, tr_
 {
     if (piece < std::size(pieces))
     {
+        auto& entry = pieces[piece];
+        auto const previous_state = entry.state;
+        auto const timestamp = now_seconds();
+
+        if (state == tr_usenet_piece_state::Available)
+        {
+            if (previous_state != tr_usenet_piece_state::Available || entry.available_at == 0U)
+            {
+                entry.available_at = timestamp;
+            }
+
+            entry.last_local_at = timestamp;
+        }
+        else if (previous_state == tr_usenet_piece_state::Available)
+        {
+            entry.available_at = 0U;
+        }
+
         pieces[piece].state = state;
     }
 }
@@ -279,6 +332,30 @@ std::optional<std::string> tr_usenet_piece_store::set_piece_state(
     return {};
 }
 
+std::optional<std::string> tr_usenet_piece_store::note_piece_local_activity(
+    std::string_view const info_hash_string,
+    tr_piece_index_t const piece) const
+{
+    auto manifest = load(info_hash_string);
+    if (!manifest)
+    {
+        return "Usenet manifest is missing";
+    }
+
+    if (piece >= manifest->piece_count())
+    {
+        return fmt::format("Usenet piece index {} is out of range", piece);
+    }
+
+    manifest->pieces[piece].last_local_at = now_seconds();
+    if (!save(*manifest))
+    {
+        return "Could not save Usenet piece manifest";
+    }
+
+    return {};
+}
+
 std::optional<std::string> tr_usenet_piece_store::reset_interrupted_uploads(
     std::string_view const info_hash_string,
     std::vector<tr_piece_index_t>& pieces) const
@@ -296,6 +373,7 @@ std::optional<std::string> tr_usenet_piece_store::reset_interrupted_uploads(
         if (manifest->pieces[piece].state == tr_usenet_piece_state::Uploading)
         {
             manifest->pieces[piece].state = tr_usenet_piece_state::Unknown;
+            manifest->pieces[piece].available_at = 0U;
             pieces.push_back(piece);
         }
     }

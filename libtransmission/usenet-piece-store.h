@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -26,6 +27,8 @@ enum class tr_usenet_piece_state : uint8_t
 struct tr_usenet_piece_entry
 {
     tr_usenet_piece_state state = tr_usenet_piece_state::Unknown;
+    uint64_t available_at = 0U;
+    uint64_t last_local_at = 0U;
     std::string message_id;
 };
 
@@ -60,6 +63,9 @@ public:
         std::string_view info_hash_string,
         tr_piece_index_t piece,
         tr_usenet_piece_state state) const;
+    [[nodiscard]] std::optional<std::string> note_piece_local_activity(
+        std::string_view info_hash_string,
+        tr_piece_index_t piece) const;
     [[nodiscard]] std::optional<std::string> reset_interrupted_uploads(
         std::string_view info_hash_string,
         std::vector<tr_piece_index_t>& pieces) const;

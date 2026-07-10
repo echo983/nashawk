@@ -4,6 +4,7 @@
 // License text can be found in the licenses/ folder.
 
 #include <array>
+#include <fstream>
 #include <string_view>
 #include <vector>
 
@@ -76,6 +77,47 @@ TEST_F(UsenetPieceStoreTest, savesPieceState)
     auto loaded = store.load(metainfo.info_hash_string());
     ASSERT_TRUE(loaded);
     EXPECT_TRUE(loaded->is_available(0));
+    EXPECT_GT(loaded->pieces[0].available_at, 0U);
+    EXPECT_GT(loaded->pieces[0].last_local_at, 0U);
+}
+
+TEST_F(UsenetPieceStoreTest, notePieceLocalActivityUpdatesTimestamp)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+
+    auto loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(0U, loaded->pieces[0].last_local_at);
+
+    EXPECT_FALSE(store.note_piece_local_activity(metainfo.info_hash_string(), 0));
+
+    loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    EXPECT_GT(loaded->pieces[0].last_local_at, 0U);
+}
+
+TEST_F(UsenetPieceStoreTest, loadsManifestWithoutTimestamps)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+
+    auto file = std::ofstream{ store.manifest_path(metainfo.info_hash_string()) };
+    file << fmt::format(
+        R"({{"version":1,"hash_string":"{}","piece_count":1,"piece_size":{},"max_article_size":{},"pieces":[{{"status":"available","message_id":"{}@nashawk.local"}}]}})",
+        metainfo.info_hash_string(),
+        metainfo.piece_size(),
+        metainfo.piece_size(),
+        tr_sha1_to_string(metainfo.piece_hash(0)));
+    file.close();
+
+    auto loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    ASSERT_EQ(1U, loaded->piece_count());
+    EXPECT_TRUE(loaded->is_available(0));
+    EXPECT_EQ(0U, loaded->pieces[0].available_at);
+    EXPECT_EQ(0U, loaded->pieces[0].last_local_at);
 }
 
 TEST_F(UsenetPieceStoreTest, setPieceStateUpdatesManifest)
