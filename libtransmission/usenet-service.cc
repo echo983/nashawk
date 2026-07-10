@@ -493,6 +493,10 @@ void read_dotenv_file(std::map<std::string, std::string>& values, std::string co
             data = body.substr(*data_begin, pos - *data_begin);
             return {};
         }
+        else if (pos == *data_begin && line.starts_with("=ypart "sv))
+        {
+            data_begin = line_end == std::string_view::npos ? std::size(body) : line_end + 1U;
+        }
 
         if (line_end == std::string_view::npos)
         {
