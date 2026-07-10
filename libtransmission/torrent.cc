@@ -2573,6 +2573,26 @@ void tr_torrent::mark_changed()
     return checked;
 }
 
+[[nodiscard]] bool tr_torrent::install_recovered_piece(tr_piece_index_t const piece)
+{
+    TR_ASSERT(session->am_in_session_thread());
+    TR_ASSERT(piece < this->piece_count());
+
+    if (!check_piece(piece))
+    {
+        set_has_piece(piece, false);
+        checked_pieces_.set(piece, true);
+        return false;
+    }
+
+    set_has_piece(piece, true);
+    checked_pieces_.set(piece, true);
+    mark_changed();
+    set_dirty();
+    on_piece_completed(piece);
+    return true;
+}
+
 // --- RESUME HELPER
 
 tr_bitfield const& tr_torrent::ResumeHelper::checked_pieces() const noexcept

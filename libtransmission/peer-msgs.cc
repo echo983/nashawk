@@ -2119,7 +2119,13 @@ void tr_peerMsgsImpl::check_request_timeout(time_t const now)
     auto buf = std::array<uint8_t, tr_block_info::BlockSize>{};
     auto ok = is_valid_request(req) && can_serve_piece(req.index);
 
-    if (ok && tor_.has_piece(req.index))
+    if (ok && !tor_.has_piece(req.index))
+    {
+        session->fetchUsenetPiece(tor_, req.index);
+        ok = false;
+    }
+
+    if (ok)
     {
         ok = tor_.ensure_piece_is_checked(req.index);
 

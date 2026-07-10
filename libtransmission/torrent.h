@@ -629,6 +629,7 @@ struct tr_torrent
     /// METAINFO - PIECE CHECKSUMS
 
     [[nodiscard]] bool ensure_piece_is_checked(tr_piece_index_t piece);
+    [[nodiscard]] bool install_recovered_piece(tr_piece_index_t piece);
 
     /// METAINFO - MAGNET
 

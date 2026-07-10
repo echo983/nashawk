@@ -871,6 +871,7 @@ void tr_session::initImpl(init_data& data)
     {
         usenet_piece_store_ = std::make_unique<tr_usenet_piece_store>(config_dir_, settings_.usenet_check_article_size);
         startUsenetUploadWorker();
+        startUsenetDownloadWorker();
     }
 
     tr_utp_init(this);
@@ -1500,6 +1501,7 @@ double tr_sessionGetRawSpeed_KBps(tr_session const* session, tr_direction dir)
 void tr_session::closeImplPart1(std::promise<void>* closed_promise, std::chrono::time_point<std::chrono::steady_clock> deadline)
 {
     is_closing_ = true;
+    stopUsenetDownloadWorker();
     stopUsenetUploadWorker();
 
     // close the low-hanging fruit that can be closed immediately w/o consequences
@@ -2361,6 +2363,193 @@ void tr_session::addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<ui
     }
 }
 
+bool tr_session::isUsenetDownloadInFlight(std::string_view const info_hash_string, tr_piece_index_t const piece) const
+{
+    return std::ranges::any_of(usenet_download_in_flight_, [info_hash_string, piece](auto const& item)
+                              { return item.first == info_hash_string && item.second == piece; });
+}
+
+void tr_session::removeUsenetDownloadInFlight(std::string_view const info_hash_string, tr_piece_index_t const piece)
+{
+    std::erase_if(usenet_download_in_flight_, [info_hash_string, piece](auto const& item)
+                  { return item.first == info_hash_string && item.second == piece; });
+}
+
+void tr_session::fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t const piece)
+{
+    if (usenet_piece_store_ == nullptr || !tor.has_metainfo() || tor.has_piece(piece))
+    {
+        return;
+    }
+
+    auto const info_hash_string = std::string{ tor.info_hash_string() };
+    auto entry = std::optional<tr_usenet_piece_entry>{};
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        entry = usenet_piece_store_->piece_entry(info_hash_string, piece);
+    }
+
+    if (!entry || entry->state != tr_usenet_piece_state::Available)
+    {
+        return;
+    }
+
+    {
+        auto lock = std::lock_guard{ usenet_download_mutex_ };
+        if (usenet_download_stopping_ || isUsenetDownloadInFlight(info_hash_string, piece))
+        {
+            return;
+        }
+
+        usenet_download_in_flight_.emplace_back(info_hash_string, piece);
+    }
+
+    enqueueUsenetDownloadTask({
+        .torrent_id = tor.id(),
+        .info_hash_string = std::move(info_hash_string),
+        .piece = piece,
+        .message_id = entry->message_id,
+        .expected_size = tor.piece_size(piece),
+    });
+
+    tr_logAddTraceTor(&tor, fmt::format("Queued piece {} for Usenet download", piece));
+}
+
+void tr_session::startUsenetDownloadWorker()
+{
+    if (usenet_download_thread_ != nullptr)
+    {
+        return;
+    }
+
+    usenet_download_stopping_ = false;
+    usenet_download_thread_ = std::make_unique<std::thread>(&tr_session::usenetDownloadWorker, this);
+}
+
+void tr_session::stopUsenetDownloadWorker()
+{
+    {
+        auto lock = std::lock_guard{ usenet_download_mutex_ };
+        usenet_download_stopping_ = true;
+    }
+    usenet_download_cv_.notify_one();
+
+    if (usenet_download_thread_ != nullptr && usenet_download_thread_->joinable())
+    {
+        usenet_download_thread_->join();
+    }
+
+    usenet_download_thread_.reset();
+
+    {
+        auto lock = std::lock_guard{ usenet_download_mutex_ };
+        usenet_download_queue_.clear();
+        usenet_download_in_flight_.clear();
+    }
+}
+
+void tr_session::enqueueUsenetDownloadTask(UsenetDownloadTask task)
+{
+    {
+        auto lock = std::lock_guard{ usenet_download_mutex_ };
+        if (usenet_download_stopping_)
+        {
+            removeUsenetDownloadInFlight(task.info_hash_string, task.piece);
+            return;
+        }
+
+        usenet_download_queue_.push_back(std::move(task));
+    }
+
+    usenet_download_cv_.notify_one();
+}
+
+void tr_session::usenetDownloadWorker()
+{
+    for (;;)
+    {
+        auto task = UsenetDownloadTask{};
+        {
+            auto lock = std::unique_lock{ usenet_download_mutex_ };
+            usenet_download_cv_.wait(lock, [this]() { return usenet_download_stopping_ || !std::empty(usenet_download_queue_); });
+
+            if (usenet_download_stopping_)
+            {
+                return;
+            }
+
+            task = std::move(usenet_download_queue_.front());
+            usenet_download_queue_.pop_front();
+        }
+
+        auto result = UsenetDownloadResult{ .task = std::move(task), .data = {}, .error = {} };
+        result.error = tr_usenet_download_piece(
+            {
+                .config_dir = config_dir_,
+                .message_id = result.task.message_id,
+                .expected_size = result.task.expected_size,
+            },
+            result.data);
+
+        {
+            auto lock = std::lock_guard{ usenet_download_mutex_ };
+            if (usenet_download_stopping_)
+            {
+                return;
+            }
+        }
+
+        queue_session_thread([this, result = std::move(result)]() mutable { onUsenetPieceDownloaded(std::move(result)); });
+    }
+}
+
+void tr_session::onUsenetPieceDownloaded(UsenetDownloadResult result)
+{
+    {
+        auto lock = std::lock_guard{ usenet_download_mutex_ };
+        removeUsenetDownloadInFlight(result.task.info_hash_string, result.task.piece);
+    }
+
+    auto* const tor = torrents_.get(result.task.torrent_id);
+    if (tor == nullptr || !tor->has_metainfo())
+    {
+        return;
+    }
+
+    if (result.error)
+    {
+        tr_logAddWarnTor(tor, fmt::format("Could not download piece {} from Usenet: {}", result.task.piece, *result.error));
+        return;
+    }
+
+    if (std::size(result.data) != tor->piece_size(result.task.piece))
+    {
+        tr_logAddWarnTor(tor, fmt::format("Usenet piece {} had an unexpected size", result.task.piece));
+        return;
+    }
+
+    if (auto const err = tr_ioWrite(
+            *tor,
+            openFiles(),
+            tor->piece_loc(result.task.piece),
+            std::span<uint8_t const>{ std::data(result.data), std::size(result.data) });
+        err != 0)
+    {
+        tr_logAddWarnTor(tor, fmt::format("Could not write Usenet piece {} to local data: {}", result.task.piece, tr_strerror(err)));
+        return;
+    }
+
+    if (!tor->install_recovered_piece(result.task.piece))
+    {
+        tr_logAddWarnTor(tor, fmt::format("Usenet piece {} failed its checksum test", result.task.piece));
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        (void)usenet_piece_store_->set_piece_state(result.task.info_hash_string, result.task.piece, tr_usenet_piece_state::Failed);
+        return;
+    }
+
+    tr_logAddTraceTor(tor, fmt::format("Usenet piece {} restored to local data", result.task.piece));
+}
+
 void tr_session::startUsenetUploadWorker()
 {
     if (usenet_upload_thread_ != nullptr)
@@ -2462,6 +2651,12 @@ void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t 
     auto entry = std::optional<tr_usenet_piece_entry>{};
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        entry = usenet_piece_store_->piece_entry(tor.info_hash_string(), piece);
+        if (entry && entry->state == tr_usenet_piece_state::Available)
+        {
+            return;
+        }
+
         error = usenet_piece_store_->set_piece_state(tor.info_hash_string(), piece, tr_usenet_piece_state::Uploading);
         if (!error)
         {

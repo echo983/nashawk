@@ -1037,6 +1037,7 @@ public:
     void ensureUsenetTorrent(tr_torrent* tor);
     [[nodiscard]] bool hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
     void addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield);
+    void fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
     void onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t piece);
     void onUsenetPieceUploadFinished(std::string info_hash_string, tr_piece_index_t piece, std::string temp_file, bool success, std::string error);
 
@@ -1243,6 +1244,37 @@ private:
     std::deque<UsenetUploadTask> usenet_upload_queue_;
     std::unique_ptr<std::thread> usenet_upload_thread_;
     bool usenet_upload_stopping_ = false;
+
+    struct UsenetDownloadTask
+    {
+        tr_torrent_id_t torrent_id = 0;
+        std::string info_hash_string;
+        tr_piece_index_t piece = 0U;
+        std::string message_id;
+        uint64_t expected_size = 0U;
+    };
+
+    struct UsenetDownloadResult
+    {
+        UsenetDownloadTask task;
+        std::vector<uint8_t> data;
+        std::optional<std::string> error;
+    };
+
+    void startUsenetDownloadWorker();
+    void stopUsenetDownloadWorker();
+    void enqueueUsenetDownloadTask(UsenetDownloadTask task);
+    void usenetDownloadWorker();
+    void onUsenetPieceDownloaded(UsenetDownloadResult result);
+    [[nodiscard]] bool isUsenetDownloadInFlight(std::string_view info_hash_string, tr_piece_index_t piece) const;
+    void removeUsenetDownloadInFlight(std::string_view info_hash_string, tr_piece_index_t piece);
+
+    std::mutex usenet_download_mutex_;
+    std::condition_variable usenet_download_cv_;
+    std::deque<UsenetDownloadTask> usenet_download_queue_;
+    std::vector<std::pair<std::string, tr_piece_index_t>> usenet_download_in_flight_;
+    std::unique_ptr<std::thread> usenet_download_thread_;
+    bool usenet_download_stopping_ = false;
 
     /// trivial type fields
 
