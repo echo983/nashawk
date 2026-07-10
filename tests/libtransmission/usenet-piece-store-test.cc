@@ -5,6 +5,7 @@
 
 #include <array>
 #include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -87,6 +88,32 @@ TEST_F(UsenetPieceStoreTest, setPieceStateUpdatesManifest)
     ASSERT_TRUE(loaded);
     ASSERT_LT(1U, loaded->piece_count());
     EXPECT_EQ(tr_usenet_piece_state::Uploading, loaded->pieces[1].state);
+}
+
+TEST_F(UsenetPieceStoreTest, resetInterruptedUploads)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+
+    ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 0, tr_usenet_piece_state::Uploading));
+    ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 1, tr_usenet_piece_state::Available));
+    ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 2, tr_usenet_piece_state::Failed));
+    ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 3, tr_usenet_piece_state::Uploading));
+
+    auto pieces = std::vector<tr_piece_index_t>{};
+    EXPECT_FALSE(store.reset_interrupted_uploads(metainfo.info_hash_string(), pieces));
+    EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U, 3U }), pieces);
+
+    auto loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(tr_usenet_piece_state::Unknown, loaded->pieces[0].state);
+    EXPECT_EQ(tr_usenet_piece_state::Available, loaded->pieces[1].state);
+    EXPECT_EQ(tr_usenet_piece_state::Failed, loaded->pieces[2].state);
+    EXPECT_EQ(tr_usenet_piece_state::Unknown, loaded->pieces[3].state);
+
+    EXPECT_FALSE(store.reset_interrupted_uploads(metainfo.info_hash_string(), pieces));
+    EXPECT_TRUE(std::empty(pieces));
 }
 
 TEST_F(UsenetPieceStoreTest, pieceEntryLoadsSinglePiece)

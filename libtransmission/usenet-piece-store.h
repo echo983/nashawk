@@ -60,6 +60,9 @@ public:
         std::string_view info_hash_string,
         tr_piece_index_t piece,
         tr_usenet_piece_state state) const;
+    [[nodiscard]] std::optional<std::string> reset_interrupted_uploads(
+        std::string_view info_hash_string,
+        std::vector<tr_piece_index_t>& pieces) const;
     [[nodiscard]] std::optional<tr_usenet_piece_entry> piece_entry(std::string_view info_hash_string, tr_piece_index_t piece) const;
     [[nodiscard]] std::optional<tr_usenet_piece_manifest> load(std::string_view info_hash_string) const;
     [[nodiscard]] bool save(tr_usenet_piece_manifest const& manifest) const;

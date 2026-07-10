@@ -278,6 +278,41 @@ std::optional<std::string> tr_usenet_piece_store::set_piece_state(
     return {};
 }
 
+std::optional<std::string> tr_usenet_piece_store::reset_interrupted_uploads(
+    std::string_view const info_hash_string,
+    std::vector<tr_piece_index_t>& pieces) const
+{
+    pieces.clear();
+
+    auto manifest = load(info_hash_string);
+    if (!manifest)
+    {
+        return "Usenet manifest is missing";
+    }
+
+    for (tr_piece_index_t piece = 0; piece < manifest->piece_count(); ++piece)
+    {
+        if (manifest->pieces[piece].state == tr_usenet_piece_state::Uploading)
+        {
+            manifest->pieces[piece].state = tr_usenet_piece_state::Unknown;
+            pieces.push_back(piece);
+        }
+    }
+
+    if (std::empty(pieces))
+    {
+        return {};
+    }
+
+    if (!save(*manifest))
+    {
+        pieces.clear();
+        return "Could not save Usenet piece manifest";
+    }
+
+    return {};
+}
+
 std::optional<tr_usenet_piece_entry> tr_usenet_piece_store::piece_entry(
     std::string_view const info_hash_string,
     tr_piece_index_t const piece) const

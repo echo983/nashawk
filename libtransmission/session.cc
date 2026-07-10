@@ -2313,9 +2313,14 @@ void tr_session::ensureUsenetTorrent(tr_torrent* const tor)
     }
 
     auto error = std::optional<std::string>{};
+    auto interrupted_uploads = std::vector<tr_piece_index_t>{};
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
         error = usenet_piece_store_->ensure_torrent(tor->metainfo());
+        if (!error)
+        {
+            error = usenet_piece_store_->reset_interrupted_uploads(tor->info_hash_string(), interrupted_uploads);
+        }
     }
 
     if (error)
@@ -2324,6 +2329,16 @@ void tr_session::ensureUsenetTorrent(tr_torrent* const tor)
         tr_logAddErrorTor(tor, std::move(*error));
         tor->error().set_local_error(message);
         tr_torrentStop(tor);
+        return;
+    }
+
+    for (auto const piece : interrupted_uploads)
+    {
+        if (tor->has_piece(piece))
+        {
+            onUsenetPieceCompleted(*tor, piece);
+            tr_logAddTraceTor(tor, fmt::format("Requeued interrupted Usenet upload for piece {}", piece));
+        }
     }
 }
 
