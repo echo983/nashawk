@@ -1226,6 +1226,18 @@ private:
     std::unique_ptr<tr_usenet_piece_store> usenet_piece_store_;
     std::mutex usenet_piece_store_mutex_;
 
+    void startUsenetIoLimiter();
+    void stopUsenetIoLimiter();
+    [[nodiscard]] bool acquireUsenetIoSlot();
+    void releaseUsenetIoSlot();
+    [[nodiscard]] size_t usenetIoLimit() const;
+
+    std::mutex usenet_io_mutex_;
+    std::condition_variable usenet_io_cv_;
+    size_t usenet_io_limit_ = 1U;
+    size_t usenet_io_active_ = 0U;
+    bool usenet_io_stopping_ = false;
+
     struct UsenetUploadTask
     {
         std::string info_hash_string;

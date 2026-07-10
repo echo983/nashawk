@@ -870,6 +870,7 @@ void tr_session::initImpl(init_data& data)
     if (settings_.usenet_enabled)
     {
         usenet_piece_store_ = std::make_unique<tr_usenet_piece_store>(config_dir_, settings_.usenet_check_article_size);
+        startUsenetIoLimiter();
         startUsenetUploadWorker();
         startUsenetDownloadWorker();
     }
@@ -1501,6 +1502,7 @@ double tr_sessionGetRawSpeed_KBps(tr_session const* session, tr_direction dir)
 void tr_session::closeImplPart1(std::promise<void>* closed_promise, std::chrono::time_point<std::chrono::steady_clock> deadline)
 {
     is_closing_ = true;
+    stopUsenetIoLimiter();
     stopUsenetDownloadWorker();
     stopUsenetUploadWorker();
 
@@ -2391,6 +2393,55 @@ bool tr_session::hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t const pi
     return entry && entry->state == tr_usenet_piece_state::Available;
 }
 
+size_t tr_session::usenetIoLimit() const
+{
+    auto constexpr MaxUsenetIoConcurrency = size_t{ 64U };
+    return std::clamp(settings_.usenet_upload_concurrency, size_t{ 1U }, MaxUsenetIoConcurrency);
+}
+
+void tr_session::startUsenetIoLimiter()
+{
+    auto lock = std::lock_guard{ usenet_io_mutex_ };
+    usenet_io_limit_ = usenetIoLimit();
+    usenet_io_active_ = 0U;
+    usenet_io_stopping_ = false;
+}
+
+void tr_session::stopUsenetIoLimiter()
+{
+    {
+        auto lock = std::lock_guard{ usenet_io_mutex_ };
+        usenet_io_stopping_ = true;
+    }
+
+    usenet_io_cv_.notify_all();
+}
+
+bool tr_session::acquireUsenetIoSlot()
+{
+    auto lock = std::unique_lock{ usenet_io_mutex_ };
+    usenet_io_cv_.wait(lock, [this]() { return usenet_io_stopping_ || usenet_io_active_ < usenet_io_limit_; });
+
+    if (usenet_io_stopping_)
+    {
+        return false;
+    }
+
+    ++usenet_io_active_;
+    return true;
+}
+
+void tr_session::releaseUsenetIoSlot()
+{
+    {
+        auto lock = std::lock_guard{ usenet_io_mutex_ };
+        TR_ASSERT(usenet_io_active_ > 0U);
+        --usenet_io_active_;
+    }
+
+    usenet_io_cv_.notify_one();
+}
+
 void tr_session::addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield)
 {
     if (usenet_piece_store_ == nullptr || !tor.has_metainfo())
@@ -2534,6 +2585,13 @@ void tr_session::usenetDownloadWorker()
             usenet_download_queue_.pop_front();
         }
 
+        if (!acquireUsenetIoSlot())
+        {
+            auto lock = std::lock_guard{ usenet_download_mutex_ };
+            removeUsenetDownloadInFlight(task.info_hash_string, task.piece);
+            return;
+        }
+
         auto result = UsenetDownloadResult{ .task = std::move(task), .data = {}, .error = {} };
         result.error = tr_usenet_download_piece(
             {
@@ -2542,6 +2600,7 @@ void tr_session::usenetDownloadWorker()
                 .expected_size = result.task.expected_size,
             },
             result.data);
+        releaseUsenetIoSlot();
 
         {
             auto lock = std::lock_guard{ usenet_download_mutex_ };
@@ -2609,8 +2668,7 @@ void tr_session::startUsenetUploadWorker()
         return;
     }
 
-    auto constexpr MaxUploadConcurrency = size_t{ 64U };
-    auto const upload_concurrency = std::clamp(settings_.usenet_upload_concurrency, size_t{ 1U }, MaxUploadConcurrency);
+    auto const upload_concurrency = usenetIoLimit();
 
     usenet_upload_stopping_ = false;
     usenet_upload_threads_.reserve(upload_concurrency);
@@ -2619,7 +2677,7 @@ void tr_session::startUsenetUploadWorker()
         usenet_upload_threads_.emplace_back(&tr_session::usenetUploadWorker, this);
     }
 
-    tr_logAddInfo(fmt::format("Started {} Usenet upload worker(s)", upload_concurrency));
+    tr_logAddInfo(fmt::format("Started {} Usenet upload worker(s) with a shared Usenet IO limit of {}", upload_concurrency, usenet_io_limit_));
 }
 
 void tr_session::stopUsenetUploadWorker()
@@ -2686,6 +2744,12 @@ void tr_session::usenetUploadWorker()
             usenet_upload_queue_.pop_front();
         }
 
+        if (!acquireUsenetIoSlot())
+        {
+            tr_sys_path_remove(task.temp_file);
+            return;
+        }
+
         auto const upload_error = tr_usenet_upload_file({
             .config_dir = config_dir_,
             .file_path = task.temp_file,
@@ -2694,6 +2758,7 @@ void tr_session::usenetUploadWorker()
             .yenc_name = fmt::format("{}.piece", task.message_id.substr(0, task.message_id.find('@'))),
             .article_size = task.article_size,
         });
+        releaseUsenetIoSlot();
 
         onUsenetPieceUploadFinished(
             std::move(task.info_hash_string),

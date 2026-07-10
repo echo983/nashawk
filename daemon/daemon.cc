@@ -132,7 +132,7 @@ auto constexpr Options = std::array<tr_option, 51>{ {
     { 832, "no-utp", "*DEPRECATED* Disable µTP for peer connections", nullptr, Arg::None, nullptr },
     { 833, "usenet-enabled", "Enable Usenet-backed piece storage", nullptr, Arg::None, nullptr },
     { 834, "usenet-check-article-size", "Article size to validate for Usenet startup checks", nullptr, Arg::Required, "<bytes>" },
-    { 835, "usenet-upload-concurrency", "Number of concurrent Usenet upload workers", nullptr, Arg::Required, "<count>" },
+    { 835, "usenet-upload-concurrency", "Shared Usenet upload/download IO limit", nullptr, Arg::Required, "<count>" },
     { 'P', "peerport", "Port for incoming peers (Default: 51413)", "P", Arg::Required, "<port>" },
     { 'm', "portmap", "Enable portmapping via NAT-PMP or UPnP", "m", Arg::None, nullptr },
     { 'M', "no-portmap", "Disable portmapping", "M", Arg::None, nullptr },
