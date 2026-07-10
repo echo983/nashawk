@@ -37,7 +37,11 @@
 
 #include <fmt/format.h>
 
+#include "libtransmission/error.h"
+#include "libtransmission/file.h"
 #include "libtransmission/quark.h"
+#include "libtransmission/subprocess.h"
+#include "libtransmission/tr-strbuf.h"
 #include "libtransmission/variant.h"
 
 using namespace std::literals;
@@ -55,6 +59,27 @@ struct UsenetConfig
     std::string password;
     std::string from = "nashawk@localhost";
     std::string group = std::string{ DefaultGroup };
+};
+
+struct TempPathGuard
+{
+    explicit TempPathGuard(std::string path_in)
+        : path{ std::move(path_in) }
+    {
+    }
+
+    TempPathGuard(TempPathGuard const&) = delete;
+    TempPathGuard& operator=(TempPathGuard const&) = delete;
+
+    ~TempPathGuard()
+    {
+        if (!std::empty(path))
+        {
+            tr_sys_path_remove(path);
+        }
+    }
+
+    std::string path;
 };
 
 [[nodiscard]] std::string trim(std::string_view value)
@@ -399,6 +424,112 @@ void read_dotenv_file(std::map<std::string, std::string>& values, std::string co
 
     out += fmt::format("\r\n=yend size={}\r\n", std::size(payload));
     return out;
+}
+
+[[nodiscard]] std::string json_escape(std::string_view text)
+{
+    auto out = std::string{};
+    out.reserve(std::size(text) + 8U);
+
+    for (auto const ch : text)
+    {
+        switch (ch)
+        {
+        case '\\':
+            out += "\\\\";
+            break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            if (static_cast<unsigned char>(ch) < 0x20U)
+            {
+                out += fmt::format("\\u{:04x}", static_cast<unsigned char>(ch));
+            }
+            else
+            {
+                out += ch;
+            }
+            break;
+        }
+    }
+
+    return out;
+}
+
+[[nodiscard]] std::string make_nyuu_config(UsenetConfig const& config, tr_usenet_upload_request const& request)
+{
+    auto const subject = !std::empty(request.subject) ? request.subject : request.message_id;
+    auto const yenc_name = !std::empty(request.yenc_name) ? request.yenc_name : request.message_id;
+
+    auto json = std::string{};
+    json += "{\n";
+    json += fmt::format("\"host\":\"{}\",\n", json_escape(config.host));
+    json += fmt::format("\"port\":\"{}\",\n", json_escape(config.port));
+    json += fmt::format("\"ssl\":{},\n", config.tls ? "true" : "false");
+    json += fmt::format("\"user\":\"{}\",\n", json_escape(config.username));
+    json += fmt::format("\"password\":\"{}\",\n", json_escape(config.password));
+    json += "\"connections\":1,\n";
+    json += fmt::format("\"article-size\":\"{}\",\n", request.article_size);
+    json += fmt::format("\"from\":\"{}\",\n", json_escape(config.from));
+    json += fmt::format("\"groups\":\"{}\",\n", json_escape(config.group));
+    json += fmt::format("\"subject\":\"{}\",\n", json_escape(subject));
+    json += fmt::format("\"message-id\":\"{}\",\n", json_escape(request.message_id));
+    json += "\"keep-message-id\":true,\n";
+    json += fmt::format("\"yenc-name\":\"{}\",\n", json_escape(yenc_name));
+    json += "\"check-connections\":1,\n";
+    json += "\"check-tries\":2,\n";
+    json += "\"check-delay\":\"5s\",\n";
+    json += "\"check-post-tries\":0,\n";
+    json += "\"out\":null,\n";
+    json += "\"overwrite\":true,\n";
+    json += "\"quiet\":true,\n";
+    json += "\"progress\":\"none\"\n";
+    json += "}\n";
+    return json;
+}
+
+[[nodiscard]] std::optional<std::string> write_temp_file(
+    std::string_view const config_dir,
+    std::string_view const prefix,
+    std::string_view const contents,
+    std::string& filename)
+{
+    auto path = std::string{ tr_pathbuf{ std::empty(config_dir) ? "."sv : config_dir, '/', prefix, ".XXXXXX"sv }.sv() };
+    auto error = tr_error{};
+    auto fd = tr_sys_file_open_temp(std::data(path), &error);
+    if (fd == TR_BAD_SYS_FILE)
+    {
+        return fmt::format("Could not create temporary Usenet file: {}", error.message());
+    }
+
+    auto bytes_written = uint64_t{};
+    if (!tr_sys_file_write(fd, std::data(contents), std::size(contents), &bytes_written, &error) ||
+        bytes_written != std::size(contents))
+    {
+        tr_sys_file_close(fd);
+        tr_sys_path_remove(path);
+        return fmt::format("Could not write temporary Usenet file: {}", error.message());
+    }
+
+    tr_sys_file_close(fd);
+    filename = std::move(path);
+    return {};
 }
 
 #ifndef _WIN32
@@ -849,6 +980,63 @@ std::optional<std::string> tr_usenet_startup_check(std::string_view const config
         {
             return post_error;
         }
+    }
+
+    return {};
+}
+
+std::optional<std::string> tr_usenet_upload_file(tr_usenet_upload_request const& request)
+{
+    if (std::empty(request.file_path))
+    {
+        return "Usenet upload requires a file path";
+    }
+
+    if (std::empty(request.message_id))
+    {
+        return "Usenet upload requires a message id";
+    }
+
+    if (request.article_size == 0U)
+    {
+        return "Usenet upload requires a positive article size";
+    }
+
+    auto error = std::string{};
+    auto const config = load_usenet_config(request.config_dir, error);
+    if (!config)
+    {
+        return error;
+    }
+
+    auto config_path = std::string{};
+    if (auto write_error = write_temp_file(request.config_dir, "nyuu-config"sv, make_nyuu_config(*config, request), config_path);
+        write_error)
+    {
+        return write_error;
+    }
+
+    auto config_guard = TempPathGuard{ config_path };
+
+    auto args = std::vector<std::string>{
+        "nyuu",
+        "--config",
+        config_path,
+        std::string{ request.file_path },
+    };
+
+    auto c_args = std::vector<char const*>{};
+    c_args.reserve(std::size(args) + 1U);
+    for (auto const& arg : args)
+    {
+        c_args.push_back(arg.c_str());
+    }
+    c_args.push_back(nullptr);
+
+    auto spawn_error = tr_error{};
+    if (!tr_spawn_sync(std::data(c_args), {}, {}, &spawn_error))
+    {
+        return fmt::format("nyuu upload failed: {}", spawn_error.message());
     }
 
     return {};

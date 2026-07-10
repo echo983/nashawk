@@ -173,3 +173,88 @@ bool tr_spawn_async(
 
     return tr_spawn_async_in_parent(pipe_fds[0], error);
 }
+
+bool tr_spawn_sync(
+    char const* const* cmd,
+    std::map<std::string_view, std::string_view> const& env,
+    std::string_view work_dir,
+    tr_error* error)
+{
+    auto pipe_fds = std::array<int, 2>{};
+
+    if (pipe(std::data(pipe_fds)) == -1)
+    {
+        set_system_error(error, errno, "Call to pipe()");
+        return false;
+    }
+
+    if (fcntl(pipe_fds[1], F_SETFD, fcntl(pipe_fds[1], F_GETFD) | FD_CLOEXEC) == -1)
+    {
+        set_system_error(error, errno, "Call to fcntl()");
+        close(pipe_fds[0]);
+        close(pipe_fds[1]);
+        return false;
+    }
+
+    int const child_pid = fork();
+
+    if (child_pid == -1)
+    {
+        set_system_error(error, errno, "Call to fork()");
+        close(pipe_fds[0]);
+        close(pipe_fds[1]);
+        return false;
+    }
+
+    if (child_pid == 0)
+    {
+        close(pipe_fds[0]);
+
+        if (!tr_spawn_async_in_child(cmd, env, work_dir))
+        {
+            auto const ok = write(pipe_fds[1], &errno, sizeof(errno)) != -1;
+            _exit(ok ? EXIT_SUCCESS : EXIT_FAILURE);
+        }
+    }
+
+    close(pipe_fds[1]);
+
+    if (!tr_spawn_async_in_parent(pipe_fds[0], error))
+    {
+        (void)waitpid(child_pid, nullptr, 0);
+        return false;
+    }
+
+    auto status = int{};
+    while (waitpid(child_pid, &status, 0) == -1)
+    {
+        if (errno != EINTR)
+        {
+            set_system_error(error, errno, "Call to waitpid()");
+            return false;
+        }
+    }
+
+    if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS)
+    {
+        return true;
+    }
+
+    if (error != nullptr)
+    {
+        if (WIFEXITED(status))
+        {
+            error->set(WEXITSTATUS(status), fmt::format("Child process exited with code {}", WEXITSTATUS(status)));
+        }
+        else if (WIFSIGNALED(status))
+        {
+            error->set(128 + WTERMSIG(status), fmt::format("Child process terminated by signal {}", WTERMSIG(status)));
+        }
+        else
+        {
+            error->set(ECHILD, "Child process did not exit normally");
+        }
+    }
+
+    return false;
+}
