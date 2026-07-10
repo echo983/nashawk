@@ -426,6 +426,170 @@ void read_dotenv_file(std::map<std::string, std::string>& values, std::string co
     return out;
 }
 
+[[nodiscard]] std::optional<uint64_t> yenc_line_value(std::string_view line, std::string_view key)
+{
+    auto const marker = fmt::format("{}=", key);
+    auto const pos = line.find(marker);
+    if (pos == std::string_view::npos)
+    {
+        return {};
+    }
+
+    auto value = line.substr(pos + std::size(marker));
+    auto const end = value.find_first_of(" \t\r\n"sv);
+    if (end != std::string_view::npos)
+    {
+        value = value.substr(0, end);
+    }
+
+    auto parsed = uint64_t{};
+    auto const* const first = std::data(value);
+    auto const* const last = first + std::size(value);
+    auto const result = std::from_chars(first, last, parsed);
+    if (result.ec != std::errc{} || result.ptr != last)
+    {
+        return {};
+    }
+
+    return parsed;
+}
+
+[[nodiscard]] std::string_view trim_cr(std::string_view line)
+{
+    if (!std::empty(line) && line.back() == '\r')
+    {
+        line.remove_suffix(1U);
+    }
+
+    return line;
+}
+
+[[nodiscard]] std::optional<std::string> find_yenc_body(
+    std::string_view body,
+    std::string_view& data,
+    std::string_view& ybegin,
+    std::string_view& yend)
+{
+    auto pos = size_t{ 0U };
+    auto data_begin = std::optional<size_t>{};
+
+    while (pos <= std::size(body))
+    {
+        auto const line_end = body.find('\n', pos);
+        auto const raw_end = line_end == std::string_view::npos ? std::size(body) : line_end;
+        auto const line = trim_cr(body.substr(pos, raw_end - pos));
+
+        if (!data_begin)
+        {
+            if (line.starts_with("=ybegin "sv))
+            {
+                ybegin = line;
+                data_begin = line_end == std::string_view::npos ? std::size(body) : line_end + 1U;
+            }
+        }
+        else if (line.starts_with("=yend"sv))
+        {
+            yend = line;
+            data = body.substr(*data_begin, pos - *data_begin);
+            return {};
+        }
+
+        if (line_end == std::string_view::npos)
+        {
+            break;
+        }
+        pos = line_end + 1U;
+    }
+
+    return data_begin ? "Usenet article is missing yEnc end marker" : "Usenet article is missing yEnc begin marker";
+}
+
+[[nodiscard]] std::optional<std::string> yenc_decode_body(
+    std::string_view body,
+    uint64_t const expected_size,
+    std::vector<uint8_t>& setme)
+{
+    auto data = std::string_view{};
+    auto ybegin = std::string_view{};
+    auto yend = std::string_view{};
+    if (auto error = find_yenc_body(body, data, ybegin, yend); error)
+    {
+        return error;
+    }
+
+    auto const ybegin_size = yenc_line_value(ybegin, "size"sv);
+    auto const yend_size = yenc_line_value(yend, "size"sv);
+    auto const declared_size = yend_size ? yend_size : ybegin_size;
+
+    setme.clear();
+    if (declared_size)
+    {
+        setme.reserve(static_cast<size_t>(*declared_size));
+    }
+    else
+    {
+        setme.reserve(std::size(data));
+    }
+
+    for (size_t i = 0; i < std::size(data); ++i)
+    {
+        auto const encoded = static_cast<unsigned char>(data[i]);
+        if (encoded == '\r' || encoded == '\n')
+        {
+            continue;
+        }
+
+        if (encoded == '=')
+        {
+            if (++i >= std::size(data))
+            {
+                return "Usenet yEnc payload has a dangling escape";
+            }
+
+            auto const escaped = static_cast<unsigned char>(data[i]);
+            if (escaped == '\r' || escaped == '\n')
+            {
+                return "Usenet yEnc payload has an invalid escaped newline";
+            }
+
+            setme.push_back(static_cast<uint8_t>((escaped - 64U - 42U) & 0xFFU));
+        }
+        else
+        {
+            setme.push_back(static_cast<uint8_t>((encoded - 42U) & 0xFFU));
+        }
+    }
+
+    auto const actual_size = static_cast<uint64_t>(std::size(setme));
+    if (ybegin_size && *ybegin_size != actual_size)
+    {
+        return fmt::format("Usenet yEnc begin size mismatch: expected {}, got {}", *ybegin_size, actual_size);
+    }
+    if (yend_size && *yend_size != actual_size)
+    {
+        return fmt::format("Usenet yEnc end size mismatch: expected {}, got {}", *yend_size, actual_size);
+    }
+    if (expected_size != 0U && expected_size != actual_size)
+    {
+        return fmt::format("Usenet piece size mismatch: expected {}, got {}", expected_size, actual_size);
+    }
+
+    return {};
+}
+
+[[nodiscard]] std::string normalized_message_id(std::string_view message_id)
+{
+    auto trimmed = trim(message_id);
+    auto normalized = std::string_view{ trimmed };
+    if (std::size(normalized) >= 2U && normalized.front() == '<' && normalized.back() == '>')
+    {
+        normalized.remove_prefix(1U);
+        normalized.remove_suffix(1U);
+    }
+
+    return std::string{ normalized };
+}
+
 [[nodiscard]] std::string json_escape(std::string_view text)
 {
     auto out = std::string{};
@@ -1040,4 +1204,48 @@ std::optional<std::string> tr_usenet_upload_file(tr_usenet_upload_request const&
     }
 
     return {};
+}
+
+std::optional<std::string> tr_usenet_download_piece(
+    tr_usenet_download_request const& request,
+    std::vector<uint8_t>& setme)
+{
+    auto const message_id = normalized_message_id(request.message_id);
+    if (std::empty(message_id))
+    {
+        return "Usenet download requires a message id";
+    }
+
+    auto error = std::string{};
+    auto const config = load_usenet_config(request.config_dir, error);
+    if (!config)
+    {
+        return error;
+    }
+
+#ifdef _WIN32
+    return "Usenet article download is not implemented on Windows yet";
+#else
+    auto connection = NntpConnection{};
+    if (auto connect_error = connection.connect_to(*config); connect_error)
+    {
+        return connect_error;
+    }
+    if (auto auth_error = connection.auth(*config); auth_error)
+    {
+        return auth_error;
+    }
+    if (auto group_error = connection.group(config->group); group_error)
+    {
+        return group_error;
+    }
+
+    auto body = std::string{};
+    if (auto body_error = connection.body(message_id, body); body_error)
+    {
+        return body_error;
+    }
+
+    return yenc_decode_body(body, request.expected_size, setme);
+#endif
 }
