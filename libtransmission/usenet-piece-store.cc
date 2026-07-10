@@ -96,7 +96,8 @@ auto constexpr Domain = "nashawk.local"sv;
         manifest.piece_size = static_cast<uint64_t>(*piece_size);
     }
 
-    if (auto const max_article_size = top->value_if<int64_t>(key_max_article_size()); max_article_size && *max_article_size >= 0)
+    if (auto const max_article_size = top->value_if<int64_t>(key_max_article_size());
+        max_article_size && *max_article_size >= 0)
     {
         manifest.max_article_size = static_cast<uint64_t>(*max_article_size);
     }
@@ -364,10 +365,11 @@ tr_usenet_piece_manifest tr_usenet_piece_store::make_manifest(tr_torrent_metainf
 
     for (tr_piece_index_t piece = 0; piece < metainfo.piece_count(); ++piece)
     {
-        manifest.pieces.push_back({
-            .state = tr_usenet_piece_state::Unknown,
-            .message_id = make_message_id(metainfo.piece_hash(piece)),
-        });
+        manifest.pieces.push_back(
+            {
+                .state = tr_usenet_piece_state::Unknown,
+                .message_id = make_message_id(metainfo.piece_hash(piece)),
+            });
     }
 
     return manifest;

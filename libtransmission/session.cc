@@ -2468,14 +2468,16 @@ void tr_session::addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<ui
 
 bool tr_session::isUsenetDownloadInFlight(std::string_view const info_hash_string, tr_piece_index_t const piece) const
 {
-    return std::ranges::any_of(usenet_download_in_flight_, [info_hash_string, piece](auto const& item)
-                              { return item.first == info_hash_string && item.second == piece; });
+    return std::ranges::any_of(
+        usenet_download_in_flight_,
+        [info_hash_string, piece](auto const& item) { return item.first == info_hash_string && item.second == piece; });
 }
 
 void tr_session::removeUsenetDownloadInFlight(std::string_view const info_hash_string, tr_piece_index_t const piece)
 {
-    std::erase_if(usenet_download_in_flight_, [info_hash_string, piece](auto const& item)
-                  { return item.first == info_hash_string && item.second == piece; });
+    std::erase_if(
+        usenet_download_in_flight_,
+        [info_hash_string, piece](auto const& item) { return item.first == info_hash_string && item.second == piece; });
 }
 
 void tr_session::fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t const piece)
@@ -2507,13 +2509,14 @@ void tr_session::fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t const 
         usenet_download_in_flight_.emplace_back(info_hash_string, piece);
     }
 
-    enqueueUsenetDownloadTask({
-        .torrent_id = tor.id(),
-        .info_hash_string = std::move(info_hash_string),
-        .piece = piece,
-        .message_id = entry->message_id,
-        .expected_size = tor.piece_size(piece),
-    });
+    enqueueUsenetDownloadTask(
+        {
+            .torrent_id = tor.id(),
+            .info_hash_string = std::move(info_hash_string),
+            .piece = piece,
+            .message_id = entry->message_id,
+            .expected_size = tor.piece_size(piece),
+        });
 
     tr_logAddTraceTor(&tor, fmt::format("Queued piece {} for Usenet download", piece));
 }
@@ -2574,7 +2577,9 @@ void tr_session::usenetDownloadWorker()
         auto task = UsenetDownloadTask{};
         {
             auto lock = std::unique_lock{ usenet_download_mutex_ };
-            usenet_download_cv_.wait(lock, [this]() { return usenet_download_stopping_ || !std::empty(usenet_download_queue_); });
+            usenet_download_cv_.wait(
+                lock,
+                [this]() { return usenet_download_stopping_ || !std::empty(usenet_download_queue_); });
 
             if (usenet_download_stopping_)
             {
@@ -2646,7 +2651,9 @@ void tr_session::onUsenetPieceDownloaded(UsenetDownloadResult result)
             std::span<uint8_t const>{ std::data(result.data), std::size(result.data) });
         err != 0)
     {
-        tr_logAddWarnTor(tor, fmt::format("Could not write Usenet piece {} to local data: {}", result.task.piece, tr_strerror(err)));
+        tr_logAddWarnTor(
+            tor,
+            fmt::format("Could not write Usenet piece {} to local data: {}", result.task.piece, tr_strerror(err)));
         return;
     }
 
@@ -2654,7 +2661,10 @@ void tr_session::onUsenetPieceDownloaded(UsenetDownloadResult result)
     {
         tr_logAddWarnTor(tor, fmt::format("Usenet piece {} failed its checksum test", result.task.piece));
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-        (void)usenet_piece_store_->set_piece_state(result.task.info_hash_string, result.task.piece, tr_usenet_piece_state::Failed);
+        (void)usenet_piece_store_->set_piece_state(
+            result.task.info_hash_string,
+            result.task.piece,
+            tr_usenet_piece_state::Failed);
         return;
     }
 
@@ -2677,7 +2687,11 @@ void tr_session::startUsenetUploadWorker()
         usenet_upload_threads_.emplace_back(&tr_session::usenetUploadWorker, this);
     }
 
-    tr_logAddInfo(fmt::format("Started {} Usenet upload worker(s) with a shared Usenet IO limit of {}", upload_concurrency, usenet_io_limit_));
+    tr_logAddInfo(
+        fmt::format(
+            "Started {} Usenet upload worker(s) with a shared Usenet IO limit of {}",
+            upload_concurrency,
+            usenet_io_limit_));
 }
 
 void tr_session::stopUsenetUploadWorker()
@@ -2750,14 +2764,15 @@ void tr_session::usenetUploadWorker()
             return;
         }
 
-        auto const upload_error = tr_usenet_upload_file({
-            .config_dir = config_dir_,
-            .file_path = task.temp_file,
-            .message_id = task.message_id,
-            .subject = fmt::format("Nashawk piece {}", task.message_id),
-            .yenc_name = fmt::format("{}.piece", task.message_id.substr(0, task.message_id.find('@'))),
-            .article_size = task.article_size,
-        });
+        auto const upload_error = tr_usenet_upload_file(
+            {
+                .config_dir = config_dir_,
+                .file_path = task.temp_file,
+                .message_id = task.message_id,
+                .subject = fmt::format("Nashawk piece {}", task.message_id),
+                .yenc_name = fmt::format("{}.piece", task.message_id.substr(0, task.message_id.find('@'))),
+                .article_size = task.article_size,
+            });
         releaseUsenetIoSlot();
 
         onUsenetPieceUploadFinished(
@@ -2820,13 +2835,14 @@ void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t 
         return;
     }
 
-    enqueueUsenetUploadTask({
-        .info_hash_string = std::string{ tor.info_hash_string() },
-        .piece = piece,
-        .message_id = entry->message_id,
-        .temp_file = std::move(temp_file),
-        .article_size = tor.piece_size(piece),
-    });
+    enqueueUsenetUploadTask(
+        {
+            .info_hash_string = std::string{ tor.info_hash_string() },
+            .piece = piece,
+            .message_id = entry->message_id,
+            .temp_file = std::move(temp_file),
+            .article_size = tor.piece_size(piece),
+        });
 
     tr_logAddTraceTor(&tor, fmt::format("Queued piece {} for Usenet upload", piece));
 }

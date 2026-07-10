@@ -136,9 +136,27 @@ The equivalent settings keys are:
 {
   "usenet_enabled": true,
   "usenet_check_article_size": 262144,
+  "usenet_cache_size_mib": 0,
+  "usenet_eviction_enabled": false,
+  "usenet_eviction_min_age_minutes": 60,
   "usenet_upload_concurrency": 40
 }
 ```
+
+Local piece eviction is disabled by default. To enable the first conservative
+eviction policy:
+
+```sh
+transmission-daemon --usenet-enabled \
+  --usenet-eviction-enabled \
+  --usenet-eviction-min-age-minutes 60 \
+  --usenet-cache-size-mib 0
+```
+
+`usenet_cache_size_mib` defaults to `0`, which disables size-pressure eviction.
+When `usenet_eviction_enabled` is true, age-based eviction may still remove
+pieces that are already marked available in the Usenet manifest and have reached
+`usenet_eviction_min_age_minutes`.
 
 ## Startup Validation
 
@@ -205,6 +223,8 @@ in the torrent data path until removed by an operator or a future cache policy.
   intend this node to support.
 - Use `--usenet-upload-concurrency` conservatively and keep it at or below the
   provider account's simultaneous NNTP connection limit.
+- Keep `usenet_eviction_enabled` off until the node has uploaded and sampled
+  enough pieces to trust the Usenet manifest for the torrents being served.
 - Keep `.env` permissions restrictive, for example `0600`.
 - Back up `<config-dir>/usenet-pieces/`; without manifests, the node does not
   know which message-ids correspond to torrent pieces.

@@ -61,6 +61,36 @@ TEST_F(SettingsTest, canSaveBools)
     EXPECT_EQ(expected_value, *val);
 }
 
+TEST_F(SettingsTest, usenetEvictionSettingsHaveConservativeDefaults)
+{
+    auto settings = tr_session::Settings{};
+
+    EXPECT_FALSE(settings.usenet_eviction_enabled);
+    EXPECT_EQ(60U, settings.usenet_eviction_min_age_minutes);
+    EXPECT_EQ(0U, settings.usenet_cache_size_mib);
+}
+
+TEST_F(SettingsTest, canLoadAndSaveUsenetEvictionSettings)
+{
+    auto settings = tr_session::Settings{};
+
+    auto map = tr_variant::Map{ 3U };
+    map.try_emplace(TR_KEY_usenet_eviction_enabled, true);
+    map.try_emplace(TR_KEY_usenet_eviction_min_age_minutes, int64_t{ 5 });
+    map.try_emplace(TR_KEY_usenet_cache_size_mib, int64_t{ 256 });
+
+    settings.load(tr_variant{ std::move(map) });
+
+    EXPECT_TRUE(settings.usenet_eviction_enabled);
+    EXPECT_EQ(5U, settings.usenet_eviction_min_age_minutes);
+    EXPECT_EQ(256U, settings.usenet_cache_size_mib);
+
+    auto const saved = settings.save();
+    EXPECT_EQ(true, saved.value_if<bool>(TR_KEY_usenet_eviction_enabled));
+    EXPECT_EQ(5, saved.value_if<int64_t>(TR_KEY_usenet_eviction_min_age_minutes));
+    EXPECT_EQ(256, saved.value_if<int64_t>(TR_KEY_usenet_cache_size_mib));
+}
+
 TEST_F(SettingsTest, canLoadDoubles)
 {
     static auto constexpr Key = TR_KEY_seed_ratio_limit;

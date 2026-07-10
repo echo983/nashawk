@@ -290,7 +290,11 @@ TEST_P(SubprocessTest, SpawnSyncArgs)
 {
     auto const result_path = buildSandboxPath("result.txt");
     auto const test_arg = std::string{ "sync arg" };
-    auto const args = std::array<char const*, 5>{ self_path_.c_str(), result_path.data(), arg_dump_args_.data(), test_arg.data(), nullptr };
+    auto const args = std::array<char const*, 5>{ self_path_.c_str(),
+                                                  result_path.data(),
+                                                  arg_dump_args_.data(),
+                                                  test_arg.data(),
+                                                  nullptr };
 
     auto error = tr_error{};
     bool const ret = tr_spawn_sync(std::data(args), {}, {}, &error);
@@ -313,7 +317,11 @@ TEST_P(SubprocessTest, SpawnSyncEnv)
     auto const test_env_key = std::string{ "TR_SYNC_TEST_ENV_KEY" };
     auto const test_env_value = std::string{ "sync env value" };
 
-    auto const args = std::array<char const*, 5>{ self_path_.c_str(), result_path.data(), arg_dump_env_.data(), test_env_key.data(), nullptr };
+    auto const args = std::array<char const*, 5>{ self_path_.c_str(),
+                                                  result_path.data(),
+                                                  arg_dump_env_.data(),
+                                                  test_env_key.data(),
+                                                  nullptr };
     auto const env = std::map<std::string_view, std::string_view>{ { test_env_key, test_env_value } };
 
     auto error = tr_error{};

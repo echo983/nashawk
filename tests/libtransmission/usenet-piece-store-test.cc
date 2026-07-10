@@ -34,8 +34,10 @@ using UsenetPieceStoreTest = SandboxedTest;
 
 TEST_F(UsenetPieceStoreTest, stateNamesRoundtrip)
 {
-    for (auto const state : { tr_usenet_piece_state::Unknown, tr_usenet_piece_state::Uploading, tr_usenet_piece_state::Available,
-             tr_usenet_piece_state::Failed })
+    for (auto const state : { tr_usenet_piece_state::Unknown,
+                              tr_usenet_piece_state::Uploading,
+                              tr_usenet_piece_state::Available,
+                              tr_usenet_piece_state::Failed })
     {
         EXPECT_EQ(state, tr_usenet_piece_state_from_name(tr_usenet_piece_state_name(state)));
     }

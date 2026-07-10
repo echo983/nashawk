@@ -106,6 +106,7 @@ public:
     bool tcp_enabled = true;
     bool torrent_complete_verify_enabled = false;
     bool utp_enabled = true;
+    bool usenet_eviction_enabled = false;
     bool usenet_enabled = false;
     double ratio_limit = 2.0;
     size_t unused_cache_size_mbytes = 4U; // TODO(TR5): remove
@@ -118,8 +119,9 @@ public:
     size_t speed_limit_down = 100U;
     size_t speed_limit_up = 100U;
     size_t upload_slots_per_torrent = 8U;
-    size_t usenet_cache_size_mib = 1024U;
+    size_t usenet_cache_size_mib = 0U;
     size_t usenet_check_article_size = 1024U * 1024U;
+    size_t usenet_eviction_min_age_minutes = 60U;
     size_t usenet_upload_concurrency = 4U;
     small::max_size_vector<tr_preferred_transport, PreferredTransportCount> preferred_transports = {
         tr_preferred_transport::UTP,
@@ -225,6 +227,8 @@ public:
         Field<&SessionSettings::usenet_cache_dir>{ TR_KEY_usenet_cache_dir },
         Field<&SessionSettings::usenet_cache_size_mib>{ TR_KEY_usenet_cache_size_mib },
         Field<&SessionSettings::usenet_check_article_size>{ TR_KEY_usenet_check_article_size },
+        Field<&SessionSettings::usenet_eviction_enabled>{ TR_KEY_usenet_eviction_enabled },
+        Field<&SessionSettings::usenet_eviction_min_age_minutes>{ TR_KEY_usenet_eviction_min_age_minutes },
         Field<&SessionSettings::usenet_enabled>{ TR_KEY_usenet_enabled },
         Field<&SessionSettings::usenet_upload_concurrency>{ TR_KEY_usenet_upload_concurrency },
         Field<&SessionSettings::utp_enabled>{ TR_KEY_utp_enabled });

@@ -88,7 +88,7 @@ static_assert(TrDefaultPeerPort == 51413, "update 'peerport' desc");
 static_assert(TrDefaultPeerLimitTorrent == 50, "update 'peerlimit-torrent' desc");
 static_assert(TrDefaultPeerLimitGlobal == 200, "update 'peerlimit-global' desc");
 static_assert(TrDefaultRpcPort == 9091 && R"(update "port" desc)");
-auto constexpr Options = std::array<tr_option, 51>{ {
+auto constexpr Options = std::array<tr_option, 54>{ {
     { 'a', "allowed", "Allowed IP addresses. (Default: '127.0.0.1,::1')", "a", Arg::Required, "<list>" },
     { 'b', "blocklist", "Enable peer blocklists", "b", Arg::None, nullptr },
     { 'B', "no-blocklist", "Disable peer blocklists", "B", Arg::None, nullptr },
@@ -131,8 +131,26 @@ auto constexpr Options = std::array<tr_option, 51>{ {
     { 831, "utp", "*DEPRECATED* Enable µTP for peer connections", nullptr, Arg::None, nullptr },
     { 832, "no-utp", "*DEPRECATED* Disable µTP for peer connections", nullptr, Arg::None, nullptr },
     { 833, "usenet-enabled", "Enable Usenet-backed piece storage", nullptr, Arg::None, nullptr },
-    { 834, "usenet-check-article-size", "Article size to validate for Usenet startup checks", nullptr, Arg::Required, "<bytes>" },
+    { 834,
+      "usenet-check-article-size",
+      "Article size to validate for Usenet startup checks",
+      nullptr,
+      Arg::Required,
+      "<bytes>" },
     { 835, "usenet-upload-concurrency", "Shared Usenet upload/download IO limit", nullptr, Arg::Required, "<count>" },
+    { 836, "usenet-eviction-enabled", "Enable automatic eviction of Usenet-backed local pieces", nullptr, Arg::None, nullptr },
+    { 837,
+      "usenet-eviction-min-age-minutes",
+      "Minimum Usenet availability age before local piece eviction",
+      nullptr,
+      Arg::Required,
+      "<minutes>" },
+    { 838,
+      "usenet-cache-size-mib",
+      "Target local cache size for Usenet-restorable pieces; 0 disables size pressure",
+      nullptr,
+      Arg::Required,
+      "<MiB>" },
     { 'P', "peerport", "Port for incoming peers (Default: 51413)", "P", Arg::Required, "<port>" },
     { 'm', "portmap", "Enable portmapping via NAT-PMP or UPnP", "m", Arg::None, nullptr },
     { 'M', "no-portmap", "Disable portmapping", "M", Arg::None, nullptr },
@@ -772,6 +790,24 @@ bool tr_daemon::parse_args(int argc, char const* const* argv, bool* dump_setting
             if (auto const concurrency = tr_num_parse<int64_t>(optstr); concurrency && *concurrency > 0)
             {
                 map->insert_or_assign(TR_KEY_usenet_upload_concurrency, *concurrency);
+            }
+            break;
+
+        case 836:
+            map->insert_or_assign(TR_KEY_usenet_eviction_enabled, true);
+            break;
+
+        case 837:
+            if (auto const min_age = tr_num_parse<int64_t>(optstr); min_age && *min_age >= 0)
+            {
+                map->insert_or_assign(TR_KEY_usenet_eviction_min_age_minutes, *min_age);
+            }
+            break;
+
+        case 838:
+            if (auto const cache_size = tr_num_parse<int64_t>(optstr); cache_size && *cache_size >= 0)
+            {
+                map->insert_or_assign(TR_KEY_usenet_cache_size_mib, *cache_size);
             }
             break;
 

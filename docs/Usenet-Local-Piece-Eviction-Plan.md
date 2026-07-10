@@ -34,7 +34,7 @@ pieces are available.
 
 All settings default to conservative values.
 
-Proposed settings:
+Settings:
 
 - `usenet_eviction_enabled`: default `false`
 - `usenet_eviction_min_age_minutes`: default `60`

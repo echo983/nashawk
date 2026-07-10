@@ -238,8 +238,8 @@ void read_dotenv_file(std::map<std::string, std::string>& values, std::string co
     read_dotenv_file(values, ".env");
     read_dotenv_file(values, config_path(config_dir, ".env"));
 
-    for (auto const* key : { "USENET_HOST", "USENET_PORT", "USENET_TLS", "USENET_USERNAME", "USENET_PASSWORD", "USENET_FROM",
-             "USENET_GROUP" })
+    for (auto const* key :
+         { "USENET_HOST", "USENET_PORT", "USENET_TLS", "USENET_USERNAME", "USENET_PASSWORD", "USENET_FROM", "USENET_GROUP" })
     {
         if (auto value = getenv_string(key); value)
         {
@@ -254,7 +254,8 @@ void read_dotenv_file(std::map<std::string, std::string>& values, std::string co
 {
     auto const values = read_usenet_env(config_dir);
 
-    auto get = [&values](std::string_view key) -> std::optional<std::string> {
+    auto get = [&values](std::string_view key) -> std::optional<std::string>
+    {
         if (auto const it = values.find(std::string{ key }); it != std::end(values) && !std::empty(it->second))
         {
             return it->second;
@@ -336,7 +337,9 @@ void read_dotenv_file(std::map<std::string, std::string>& values, std::string co
 [[nodiscard]] bool executable_exists(std::string const& path)
 {
 #ifdef _WIN32
-    auto st = struct stat{};
+    auto st = struct stat
+    {
+    };
     return stat(path.c_str(), &st) == 0 && (st.st_mode & S_IFREG) != 0;
 #else
     return access(path.c_str(), X_OK) == 0;
@@ -1047,7 +1050,10 @@ private:
     return article;
 }
 
-[[nodiscard]] std::optional<std::string> check_post_read(UsenetConfig const& config, size_t const payload_size, std::string_view suffix)
+[[nodiscard]] std::optional<std::string> check_post_read(
+    UsenetConfig const& config,
+    size_t const payload_size,
+    std::string_view suffix)
 {
 #ifdef _WIN32
     return "Usenet startup checks are not implemented on Windows yet";
@@ -1178,7 +1184,8 @@ std::optional<std::string> tr_usenet_upload_file(tr_usenet_upload_request const&
     }
 
     auto config_path = std::string{};
-    if (auto write_error = write_temp_file(request.config_dir, "nyuu-config"sv, make_nyuu_config(*config, request), config_path);
+    if (auto
+            write_error = write_temp_file(request.config_dir, "nyuu-config"sv, make_nyuu_config(*config, request), config_path);
         write_error)
     {
         return write_error;
@@ -1210,9 +1217,7 @@ std::optional<std::string> tr_usenet_upload_file(tr_usenet_upload_request const&
     return {};
 }
 
-std::optional<std::string> tr_usenet_download_piece(
-    tr_usenet_download_request const& request,
-    std::vector<uint8_t>& setme)
+std::optional<std::string> tr_usenet_download_piece(tr_usenet_download_request const& request, std::vector<uint8_t>& setme)
 {
     auto const message_id = normalized_message_id(request.message_id);
     if (std::empty(message_id))
