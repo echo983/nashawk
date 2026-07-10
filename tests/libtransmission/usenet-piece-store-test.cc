@@ -60,6 +60,11 @@ TEST_F(UsenetPieceStoreTest, evictionEligibilityRequiresAvailableLocalOldPiece)
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 120U, 60U));
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 99U, 60U));
 
+    entry.last_local_at = 180U;
+    EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 200U, 60U));
+    EXPECT_TRUE(tr_usenet_piece_is_eviction_eligible(entry, true, 240U, 60U));
+
+    entry.last_local_at = 100U;
     entry.available_at = 0U;
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 200U, 60U));
 

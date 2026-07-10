@@ -238,7 +238,8 @@ bool tr_usenet_piece_is_eviction_eligible(
         return false;
     }
 
-    return now_seconds >= entry.available_at && now_seconds - entry.available_at >= min_age_seconds;
+    auto const local_reference_time = std::max(entry.available_at, entry.last_local_at);
+    return now_seconds >= local_reference_time && now_seconds - local_reference_time >= min_age_seconds;
 }
 
 size_t tr_usenet_piece_manifest::piece_count() const noexcept
