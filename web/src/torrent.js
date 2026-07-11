@@ -250,7 +250,15 @@ export class Torrent extends EventTarget {
     return this.fields.uploaded_ever;
   }
   getUsenetPieceSummary() {
-    return this.fields.usenet_piece_summary || null;
+    const summary = this.fields.usenet_piece_summary;
+    if (!summary) {
+      return null;
+    }
+
+    return {
+      ...summary,
+      piece_count: summary.piece_count ?? summary.pieceCount,
+    };
   }
   getWebseedsSendingToUs() {
     return this.fields.webseeds_sending_to_us;

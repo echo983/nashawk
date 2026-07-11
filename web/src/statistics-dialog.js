@@ -12,6 +12,10 @@ import {
   isUsenetDebugEnabled,
 } from './utils.js';
 
+function getUsenetStats(stats) {
+  return stats.usenet ?? (Object.hasOwn(stats, 'usenet_enabled') ? stats : {});
+}
+
 export class StatisticsDialog extends EventTarget {
   constructor(remote) {
     super();
@@ -60,7 +64,7 @@ export class StatisticsDialog extends EventTarget {
   }
 
   _updateUsenet(stats) {
-    const u = stats.usenet ?? {};
+    const u = getUsenetStats(stats);
     const fmt = Formatter;
     const enabled = u.usenet_enabled === true;
     const known = 'usenet_enabled' in u;
