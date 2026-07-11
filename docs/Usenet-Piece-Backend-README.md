@@ -138,9 +138,14 @@ transmission-daemon --usenet-enabled --usenet-upload-concurrency 40
 ```
 
 The shared Usenet IO limit defaults to 4 and is clamped to 1 through 64. Upload
-workers and the download worker must acquire a slot from this same limit before
+workers and download workers must acquire a slot from this same limit before
 opening Usenet IO, so a setting of 40 will not create more than 40 concurrent
 Usenet operations.
+
+For stability with `nyuu` 0.4.x, Nashawk caps concurrent `nyuu` upload
+processes at 2. Higher `usenet_upload_concurrency` values still raise the
+shared IO limit used by Usenet reads and queued work, but they do not start more
+than 2 simultaneous `nyuu` upload processes.
 
 The equivalent settings keys are:
 

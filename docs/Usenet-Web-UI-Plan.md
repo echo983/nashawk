@@ -61,12 +61,16 @@ Add a read-only `usenet` object:
   "usenet_upload_queue_size": 12,
   "usenet_download_queue_size": 1,
   "usenet_download_in_flight": 1,
-  "usenet_upload_concurrency": 40,
+  "usenet_upload_concurrency": 2,
   "usenet_eviction_enabled": true,
   "usenet_eviction_min_age_minutes": 60,
   "usenet_cache_size_mib": 4096
 }
 ```
+
+`usenet_io_limit` is the configured shared Usenet IO capacity. `usenet_upload_concurrency`
+is the effective number of `nyuu` upload workers, currently capped at 2 for
+stability with `nyuu` 0.4.x.
 
 Implementation notes:
 

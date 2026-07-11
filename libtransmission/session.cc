@@ -78,6 +78,7 @@ using namespace tr::Values;
 namespace
 {
 auto constexpr UsenetEvictionInterval = 5min;
+auto constexpr MaxConcurrentNyuuUploads = size_t{ 2U };
 
 [[nodiscard]] bool punch_file_hole(std::string_view const path, uint64_t const offset, uint64_t const length, tr_error& error)
 {
@@ -2532,7 +2533,7 @@ tr_usenet_runtime_snapshot tr_session::usenetRuntimeSnapshot()
         .upload_queue_size = 0U,
         .download_queue_size = 0U,
         .download_in_flight = 0U,
-        .upload_concurrency = settings_.usenet_upload_concurrency,
+        .upload_concurrency = std::min(usenetIoLimit(), MaxConcurrentNyuuUploads),
         .eviction_min_age_minutes = settings_.usenet_eviction_min_age_minutes,
         .cache_size_mib = settings_.usenet_cache_size_mib,
     };
@@ -2561,6 +2562,7 @@ tr_usenet_runtime_snapshot tr_session::usenetRuntimeSnapshot()
         snapshot.upload_queue_size = 0U;
         snapshot.download_queue_size = 0U;
         snapshot.download_in_flight = 0U;
+        snapshot.upload_concurrency = 0U;
     }
 
     return snapshot;
@@ -3023,7 +3025,7 @@ void tr_session::startUsenetUploadWorker()
         return;
     }
 
-    auto const upload_concurrency = usenetIoLimit();
+    auto const upload_concurrency = std::min(usenetIoLimit(), MaxConcurrentNyuuUploads);
 
     usenet_upload_stopping_ = false;
     usenet_upload_threads_.reserve(upload_concurrency);
