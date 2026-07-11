@@ -23,6 +23,14 @@ struct tr_usenet_upload_request
     uint64_t article_size = 0U;
 };
 
+struct tr_usenet_upload_batch_request
+{
+    std::string_view config_dir;
+    std::vector<std::string> file_paths;
+    uint64_t article_size = 0U;
+    size_t connections = 1U;
+};
+
 struct tr_usenet_download_request
 {
     std::string_view config_dir;
@@ -32,6 +40,7 @@ struct tr_usenet_download_request
 
 [[nodiscard]] std::optional<std::string> tr_usenet_startup_check(std::string_view config_dir, tr_variant const& settings);
 [[nodiscard]] std::optional<std::string> tr_usenet_upload_file(tr_usenet_upload_request const& request);
+[[nodiscard]] std::optional<std::string> tr_usenet_upload_files(tr_usenet_upload_batch_request const& request);
 [[nodiscard]] std::optional<std::string> tr_usenet_download_piece(
     tr_usenet_download_request const& request,
     std::vector<uint8_t>& setme);

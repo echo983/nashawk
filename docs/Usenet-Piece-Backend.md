@@ -27,7 +27,7 @@ Initial switches:
 - `usenet-upload-concurrency` in settings
 - `--usenet-upload-concurrency <count>` for `transmission-daemon`
 
-The shared Usenet upload/download IO limit defaults to 4 and is clamped to the local safety range 1-64. Operators can raise it to match their provider account, for example 40 concurrent Usenet operations on a server plan that permits 40 NNTP connections. `nyuu` upload subprocesses are separately capped at 2 concurrent processes for stability with `nyuu` 0.4.x; higher settings still apply to shared Usenet IO capacity, but not to simultaneous `nyuu` process count.
+The shared Usenet upload/download IO limit defaults to 4 and is clamped to the local safety range 1-64. Operators can raise it to match their provider account, for example 40 concurrent Usenet operations on a server plan that permits 40 NNTP connections. Nashawk keeps `nyuu` upload subprocess concurrency low for stability with `nyuu` 0.4.x, then batches multiple piece files into each `nyuu` process so Nyuu can use the configured IO capacity through its own multi-connection uploader.
 
 When enabled, startup must fail fast if the Usenet backend cannot be used. Required checks:
 

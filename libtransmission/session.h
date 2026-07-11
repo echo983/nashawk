@@ -1265,7 +1265,9 @@ private:
     void startUsenetIoLimiter();
     void stopUsenetIoLimiter();
     [[nodiscard]] bool acquireUsenetIoSlot();
+    [[nodiscard]] bool acquireUsenetIoSlots(size_t count);
     void releaseUsenetIoSlot();
+    void releaseUsenetIoSlots(size_t count);
     [[nodiscard]] size_t usenetIoLimit() const;
     void startUsenetEvictionTimer();
     void scanUsenetEvictionCandidates();

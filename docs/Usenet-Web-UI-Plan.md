@@ -69,8 +69,10 @@ Add a read-only `usenet` object:
 ```
 
 `usenet_io_limit` is the configured shared Usenet IO capacity. `usenet_upload_concurrency`
-is the effective number of `nyuu` upload workers, currently capped at 2 for
-stability with `nyuu` 0.4.x.
+is the effective number of `nyuu` upload workers/processes, kept low for
+stability with `nyuu` 0.4.x. Each worker may batch multiple pieces into one
+Nyuu process, and that process may use multiple NNTP connections while still
+respecting the shared IO limit.
 
 Implementation notes:
 
