@@ -3290,10 +3290,40 @@ void tr_session::usenetUploadWorker()
             continue;
         }
 
+        auto readback_success_count = size_t{};
+        auto single_retry_success_count = size_t{};
+        auto failed_count = size_t{};
+
         for (auto& task : batch)
         {
             auto success = false;
             auto error = *upload_error;
+
+            if (acquireUsenetIoSlot())
+            {
+                if (auto readback_error = verify_usenet_upload_after_error(
+                        config_dir_,
+                        task.message_id,
+                        task.temp_file,
+                        task.article_size);
+                    readback_error)
+                {
+                    error += fmt::format("; batch readback check failed: {}", *readback_error);
+                }
+                else
+                {
+                    ++readback_success_count;
+                    finish_task(std::move(task), true, {});
+                    releaseUsenetIoSlot();
+                    continue;
+                }
+                releaseUsenetIoSlot();
+            }
+            else
+            {
+                error += "; batch readback check skipped because Usenet IO is stopping";
+            }
+
             auto single_upload_error = std::optional<std::string>{ "single-piece retry skipped because Usenet IO is stopping" };
             auto const single_retry_slots = std::min(usenetIoLimit(), size_t{ 2U });
             if (acquireUsenetIoSlots(single_retry_slots))
@@ -3311,8 +3341,7 @@ void tr_session::usenetUploadWorker()
 
                 if (!single_upload_error)
                 {
-                    tr_logAddInfo(
-                        fmt::format("Usenet batch upload failed, but single-piece retry for piece {} succeeded", task.piece));
+                    ++single_retry_success_count;
                     finish_task(std::move(task), true, {});
                     continue;
                 }
@@ -3321,33 +3350,42 @@ void tr_session::usenetUploadWorker()
             error += fmt::format("; single-piece retry failed: {}", *single_upload_error);
             if (acquireUsenetIoSlot())
             {
-                if (auto readback_error = verify_usenet_upload_after_error(
+                if (auto retry_readback_error = verify_usenet_upload_after_error(
                         config_dir_,
                         task.message_id,
                         task.temp_file,
                         task.article_size);
-                    readback_error)
+                    retry_readback_error)
                 {
-                    error += fmt::format("; readback check failed: {}", *readback_error);
+                    error += fmt::format("; retry readback check failed: {}", *retry_readback_error);
                 }
                 else
                 {
-                    tr_logAddInfo(
-                        fmt::format(
-                            "Usenet upload for piece {} reported an error but readback succeeded; treating it as available",
-                            task.piece));
+                    ++readback_success_count;
                     success = true;
                     error.clear();
                 }
+
                 releaseUsenetIoSlot();
             }
             else
             {
-                error += "; readback check skipped because Usenet IO is stopping";
+                error += "; retry readback check skipped because Usenet IO is stopping";
             }
 
+            if (!success)
+            {
+                ++failed_count;
+            }
             finish_task(std::move(task), success, std::move(error));
         }
+
+        tr_logAddInfo(
+            fmt::format(
+                "Usenet batch upload reported an error; recovered {} by readback, {} by single-piece retry, {} failed",
+                readback_success_count,
+                single_retry_success_count,
+                failed_count));
     }
 }
 

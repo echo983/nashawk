@@ -16,6 +16,39 @@ For those who need more information how to use the scripts, have a look at the f
 
 ## Scripts
 
+### Nashawk Usenet Web UI test daemon
+For local Usenet/Web UI field testing, use:
+
+```sh
+./scripts/run-usenet-webui-test.sh
+```
+
+The script loads local Usenet settings from `.env`, selects Node.js `24.18.0`
+through nvm when available, points `TRANSMISSION_WEB_HOME` at
+`web/public_html`, and starts the built daemon in the foreground. Press
+`Ctrl-C` to stop it.
+
+Default test paths and settings:
+
+```text
+RPC: http://127.0.0.1:19091/transmission/web/
+Config: /tmp/nashawk-webui-real/config
+Downloads: /tmp/nashawk-webui-real/downloads
+Incomplete: /tmp/nashawk-webui-real/incomplete
+Log: /tmp/nashawk-webui-real/daemon.log
+Usenet upload concurrency: 40
+Usenet eviction: enabled
+Usenet cache size: 0 MiB
+```
+
+Common overrides:
+
+```sh
+NASHAWK_RPC_PORT=19092 ./scripts/run-usenet-webui-test.sh
+NASHAWK_LOG_FILE=/tmp/nashawk-webui-real/daemon-debug.log ./scripts/run-usenet-webui-test.sh
+NASHAWK_USENET_EVICTION_MIN_AGE_MINUTES=5 ./scripts/run-usenet-webui-test.sh
+```
+
 ### On torrent completion
 Transmission can be set to invoke a script when downloads complete. The environment variables supported are:
 
