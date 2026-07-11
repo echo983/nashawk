@@ -9,6 +9,7 @@ import {
   setTextContent,
   createDialogContainer,
   createInfoSection,
+  isUsenetDebugEnabled,
 } from './utils.js';
 
 export class StatisticsDialog extends EventTarget {
@@ -16,6 +17,7 @@ export class StatisticsDialog extends EventTarget {
     super();
 
     this.remote = remote;
+    this.usenet_diagnostics = null;
 
     const updateDaemon = () =>
       this.remote.loadDaemonStats((data) => this._update(data.result));
@@ -25,6 +27,9 @@ export class StatisticsDialog extends EventTarget {
 
     this.elements = StatisticsDialog._create();
     this.elements.dismiss.addEventListener('click', () => this._onDismiss());
+    this.elements.usenet.copy.addEventListener('click', () =>
+      this._copyUsenetDiagnostics(),
+    );
     document.body.append(this.elements.root);
     this.elements.dismiss.focus();
   }
@@ -45,8 +50,78 @@ export class StatisticsDialog extends EventTarget {
     this.close();
   }
 
+  _copyUsenetDiagnostics() {
+    const text = JSON.stringify(this.usenet_diagnostics ?? {}, null, 2);
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+    } else {
+      prompt('Select all then copy', text);
+    }
+  }
+
+  _updateUsenet(stats) {
+    const u = stats.usenet ?? {};
+    const fmt = Formatter;
+    const enabled = u.usenet_enabled === true;
+    const known = 'usenet_enabled' in u;
+    let mode = 'Unknown';
+    let eviction = 'Unknown';
+    if (known) {
+      mode = enabled ? 'Enabled' : 'Disabled';
+      eviction = u.usenet_eviction_enabled ? 'Enabled' : 'Disabled';
+    }
+
+    setTextContent(this.elements.usenet.mode, mode);
+    setTextContent(
+      this.elements.usenet.io,
+      known
+        ? `${fmt.number(u.usenet_io_active ?? 0)} / ${fmt.number(
+            u.usenet_io_limit ?? 0,
+          )}`
+        : 'Unknown',
+    );
+    setTextContent(
+      this.elements.usenet.upload_queue,
+      known ? fmt.number(u.usenet_upload_queue_size ?? 0) : 'Unknown',
+    );
+    setTextContent(
+      this.elements.usenet.download_queue,
+      known
+        ? `${fmt.number(u.usenet_download_queue_size ?? 0)} queued, ${fmt.number(
+            u.usenet_download_in_flight ?? 0,
+          )} in flight`
+        : 'Unknown',
+    );
+    setTextContent(this.elements.usenet.eviction, eviction);
+    setTextContent(
+      this.elements.usenet.eviction_age,
+      known
+        ? fmt.countString(
+            'minute',
+            'minutes',
+            u.usenet_eviction_min_age_minutes ?? 0,
+          )
+        : 'Unknown',
+    );
+    setTextContent(
+      this.elements.usenet.cache,
+      known ? fmt.mem((u.usenet_cache_size_mib ?? 0) * 1024 * 1024) : 'Unknown',
+    );
+
+    this.usenet_diagnostics = {
+      generated_at: new Date().toISOString(),
+      usenet: u,
+    };
+
+    if (isUsenetDebugEnabled()) {
+      console.log(
+        '[nashawk-usenet] session_stats.usenet',
+        this.usenet_diagnostics,
+      );
+    }
+  }
+
   _update(stats) {
-    console.log(stats);
     const fmt = Formatter;
 
     let s = stats.current_stats;
@@ -68,6 +143,8 @@ export class StatisticsDialog extends EventTarget {
       this.elements.total.time,
       fmt.timeInterval(s.seconds_active),
     );
+
+    this._updateUsenet(stats);
   }
 
   static _create() {
@@ -98,6 +175,38 @@ export class StatisticsDialog extends EventTarget {
     total.down = tdown;
     total.ratio = tratio;
     total.time = ttime;
+    workarea.append(section.root);
+
+    section = createInfoSection('Usenet', [
+      'Mode:',
+      'IO active:',
+      'Upload queue:',
+      'Download queue:',
+      'Eviction:',
+      'Eviction age:',
+      'Cache target:',
+    ]);
+    const [
+      usenet_mode,
+      usenet_io,
+      usenet_upload_queue,
+      usenet_download_queue,
+      usenet_eviction,
+      usenet_eviction_age,
+      usenet_cache,
+    ] = section.children;
+    const usenet = (elements.usenet = {});
+    usenet.mode = usenet_mode;
+    usenet.io = usenet_io;
+    usenet.upload_queue = usenet_upload_queue;
+    usenet.download_queue = usenet_download_queue;
+    usenet.eviction = usenet_eviction;
+    usenet.eviction_age = usenet_eviction_age;
+    usenet.cache = usenet_cache;
+    usenet.copy = document.createElement('button');
+    usenet.copy.type = 'button';
+    usenet.copy.textContent = 'Copy diagnostics';
+    section.root.append(usenet.copy);
     workarea.append(section.root);
 
     return elements;

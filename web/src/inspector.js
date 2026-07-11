@@ -6,7 +6,12 @@
 import { FileRow } from './file-row.js';
 import { Formatter } from './formatter.js';
 import { Torrent } from './torrent.js';
-import { Utils, createTextualTabsContainer, setTextContent } from './utils.js';
+import {
+  Utils,
+  createTextualTabsContainer,
+  isUsenetDebugEnabled,
+  setTextContent,
+} from './utils.js';
 
 const peer_column_classes = [
   'encryption',
@@ -99,6 +104,18 @@ export class Inspector extends EventTarget {
       ['remaining_time', 'Remaining:'],
       ['last_activity', 'Last activity:'],
       ['error', 'Error:'],
+    ];
+    for (const [name, text] of rows) {
+      elements[name] = append_row(text);
+    }
+
+    append_section_title('Usenet');
+    rows = [
+      ['usenet_eligible', 'Eligible:'],
+      ['usenet_manifest', 'Manifest:'],
+      ['usenet_servable', 'Servable:'],
+      ['usenet_local', 'Local pieces:'],
+      ['usenet_states', 'States:'],
     ];
     for (const [name, text] of rows) {
       elements[name] = append_row(text);
@@ -455,6 +472,64 @@ export class Inspector extends EventTarget {
       string = torrents.every((t) => get(t) === first) ? first : mixed;
     }
     setTextContent(e.info.error, string || none);
+
+    // usenet
+    if (torrents.length === 0) {
+      setTextContent(e.info.usenet_eligible, none);
+      setTextContent(e.info.usenet_manifest, none);
+      setTextContent(e.info.usenet_servable, none);
+      setTextContent(e.info.usenet_local, none);
+      setTextContent(e.info.usenet_states, none);
+    } else if (torrents.length > 1) {
+      setTextContent(e.info.usenet_eligible, mixed);
+      setTextContent(e.info.usenet_manifest, mixed);
+      setTextContent(e.info.usenet_servable, mixed);
+      setTextContent(e.info.usenet_local, mixed);
+      setTextContent(e.info.usenet_states, mixed);
+    } else {
+      const summary = torrents[0].getUsenetPieceSummary();
+      if (isUsenetDebugEnabled()) {
+        console.log('[nashawk-usenet] torrent usenet_piece_summary', {
+          hash_string: torrents[0].getHashString(),
+          usenet_piece_summary: summary,
+        });
+      }
+
+      if (summary) {
+        const pieceCount = summary.piece_count ?? 0;
+        const servable = summary.servable ?? 0;
+        const pct = pieceCount ? (100 * servable) / pieceCount : 0;
+        setTextContent(e.info.usenet_eligible, summary.eligible ? 'Yes' : 'No');
+        setTextContent(
+          e.info.usenet_manifest,
+          summary.manifest_present ? 'Present' : 'Missing',
+        );
+        setTextContent(
+          e.info.usenet_servable,
+          `${fmt.number(servable)} of ${fmt.number(
+            pieceCount,
+          )} (${fmt.percentString(pct, 1)}%)`,
+        );
+        setTextContent(
+          e.info.usenet_local,
+          fmt.number(summary.local_piece_count ?? 0),
+        );
+        setTextContent(
+          e.info.usenet_states,
+          `${fmt.number(summary.available ?? 0)} available, ${fmt.number(
+            summary.uploading ?? 0,
+          )} uploading, ${fmt.number(summary.failed ?? 0)} failed, ${fmt.number(
+            summary.unknown ?? 0,
+          )} unknown`,
+        );
+      } else {
+        setTextContent(e.info.usenet_eligible, unknown);
+        setTextContent(e.info.usenet_manifest, unknown);
+        setTextContent(e.info.usenet_servable, unknown);
+        setTextContent(e.info.usenet_local, unknown);
+        setTextContent(e.info.usenet_states, unknown);
+      }
+    }
 
     // torrent name
     if (torrents.length === 1) {

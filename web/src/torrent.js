@@ -249,6 +249,9 @@ export class Torrent extends EventTarget {
   getUploadedEver() {
     return this.fields.uploaded_ever;
   }
+  getUsenetPieceSummary() {
+    return this.fields.usenet_piece_summary || null;
+  }
   getWebseedsSendingToUs() {
     return this.fields.webseeds_sending_to_us;
   }
@@ -656,5 +659,6 @@ Torrent.Fields.StatsExtra = [
   'peers',
   'start_date',
   'tracker_stats',
+  'usenet_piece_summary',
   'webseeds_ex',
 ];
