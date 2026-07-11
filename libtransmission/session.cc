@@ -79,6 +79,9 @@ namespace
 {
 auto constexpr UsenetEvictionInterval = 5min;
 auto constexpr MaxConcurrentNyuuUploads = size_t{ 2U };
+auto constexpr MaxNyuuBatchFiles = size_t{ 40U };
+auto constexpr MaxNyuuBatchConnections = size_t{ 8U };
+auto constexpr NyuuBatchCheckConnections = size_t{ 1U };
 
 [[nodiscard]] bool punch_file_hole(std::string_view const path, uint64_t const offset, uint64_t const length, tr_error& error)
 {
@@ -162,9 +165,77 @@ struct TempFileGuard
     std::string path;
 };
 
+struct TempDirGuard
+{
+    explicit TempDirGuard(std::string path_in)
+        : path{ std::move(path_in) }
+    {
+    }
+
+    TempDirGuard(TempDirGuard const&) = delete;
+    TempDirGuard& operator=(TempDirGuard const&) = delete;
+
+    ~TempDirGuard()
+    {
+        for (auto const& file : files)
+        {
+            tr_sys_path_remove(file);
+        }
+
+        if (!std::empty(path))
+        {
+            tr_sys_path_remove(path);
+        }
+    }
+
+    [[nodiscard]] std::string release()
+    {
+        files.clear();
+        return std::exchange(path, {});
+    }
+
+    std::string path;
+    std::vector<std::string> files;
+};
+
 [[nodiscard]] std::string usenet_temp_dir(std::string_view config_dir)
 {
     return std::string{ tr_pathbuf{ config_dir, "/usenet-upload-temp"sv }.sv() };
+}
+
+[[nodiscard]] std::optional<std::string> make_usenet_batch_temp_dir(std::string_view const config_dir, std::string& dirname)
+{
+    auto const parent = usenet_temp_dir(config_dir);
+    if (auto error = tr_error{}; !tr_sys_dir_create(parent, TR_SYS_DIR_CREATE_PARENTS, 0700, &error))
+    {
+        return fmt::format("Could not create Usenet upload temp dir: {}", error.message());
+    }
+
+    auto path = std::string{ tr_pathbuf{ parent, "/batch.XXXXXX"sv }.sv() };
+    auto error = tr_error{};
+    if (!tr_sys_dir_create_temp(std::data(path), &error))
+    {
+        return fmt::format("Could not create Usenet batch temp dir: {}", error.message());
+    }
+
+    dirname = std::move(path);
+    return {};
+}
+
+[[nodiscard]] std::string message_id_local_part(std::string_view message_id)
+{
+    if (!std::empty(message_id) && message_id.front() == '<')
+    {
+        message_id.remove_prefix(1U);
+    }
+
+    if (!std::empty(message_id) && message_id.back() == '>')
+    {
+        message_id.remove_suffix(1U);
+    }
+
+    auto const at = message_id.find('@');
+    return std::string{ message_id.substr(0U, at) };
 }
 
 [[nodiscard]] std::optional<std::string> write_piece_to_temp_file(
@@ -2761,27 +2832,39 @@ void tr_session::stopUsenetIoLimiter()
 
 bool tr_session::acquireUsenetIoSlot()
 {
+    return acquireUsenetIoSlots(1U);
+}
+
+bool tr_session::acquireUsenetIoSlots(size_t const count)
+{
     auto lock = std::unique_lock{ usenet_io_mutex_ };
-    usenet_io_cv_.wait(lock, [this]() { return usenet_io_stopping_ || usenet_io_active_ < usenet_io_limit_; });
+    auto const slots = std::clamp(count, size_t{ 1U }, usenet_io_limit_);
+    usenet_io_cv_.wait(lock, [this, slots]() { return usenet_io_stopping_ || usenet_io_active_ + slots <= usenet_io_limit_; });
 
     if (usenet_io_stopping_)
     {
         return false;
     }
 
-    ++usenet_io_active_;
+    usenet_io_active_ += slots;
     return true;
 }
 
 void tr_session::releaseUsenetIoSlot()
 {
+    releaseUsenetIoSlots(1U);
+}
+
+void tr_session::releaseUsenetIoSlots(size_t const count)
+{
     {
         auto lock = std::lock_guard{ usenet_io_mutex_ };
-        TR_ASSERT(usenet_io_active_ > 0U);
-        --usenet_io_active_;
+        auto const slots = std::max<size_t>(1U, count);
+        TR_ASSERT(usenet_io_active_ >= slots);
+        usenet_io_active_ -= slots;
     }
 
-    usenet_io_cv_.notify_one();
+    usenet_io_cv_.notify_all();
 }
 
 void tr_session::addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield)
@@ -3091,7 +3174,7 @@ void tr_session::usenetUploadWorker()
 {
     for (;;)
     {
-        auto task = UsenetUploadTask{};
+        auto batch = std::vector<UsenetUploadTask>{};
         {
             auto lock = std::unique_lock{ usenet_upload_mutex_ };
             usenet_upload_cv_.wait(lock, [this]() { return usenet_upload_stopping_ || !std::empty(usenet_upload_queue_); });
@@ -3101,58 +3184,170 @@ void tr_session::usenetUploadWorker()
                 return;
             }
 
-            task = std::move(usenet_upload_queue_.front());
+            batch.push_back(std::move(usenet_upload_queue_.front()));
             usenet_upload_queue_.pop_front();
+            while (std::size(batch) < MaxNyuuBatchFiles && !std::empty(usenet_upload_queue_))
+            {
+                batch.push_back(std::move(usenet_upload_queue_.front()));
+                usenet_upload_queue_.pop_front();
+            }
         }
 
-        if (!acquireUsenetIoSlot())
+        auto finish_task = [this](UsenetUploadTask task, bool const success, std::string error)
         {
-            tr_sys_path_remove(task.temp_file);
+            onUsenetPieceUploadFinished(
+                std::move(task.info_hash_string),
+                task.piece,
+                std::move(task.message_id),
+                std::move(task.temp_file),
+                success,
+                std::move(error));
+        };
+
+        auto batch_dir = std::string{};
+        if (auto dir_error = make_usenet_batch_temp_dir(config_dir_, batch_dir); dir_error)
+        {
+            for (auto& task : batch)
+            {
+                finish_task(std::move(task), false, *dir_error);
+            }
+            continue;
+        }
+
+        auto batch_guard = TempDirGuard{ batch_dir };
+        auto staged_paths = std::vector<std::string>{};
+        staged_paths.reserve(std::size(batch));
+        auto article_size = uint64_t{};
+        auto staging_error = std::optional<std::string>{};
+
+        for (auto const& task : batch)
+        {
+            auto const local_part = message_id_local_part(task.message_id);
+            if (std::empty(local_part))
+            {
+                staging_error = fmt::format("Could not stage Usenet batch file for invalid message id '{}'", task.message_id);
+                break;
+            }
+
+            auto const staged_path = std::string{ tr_pathbuf{ batch_dir, '/', local_part, ".piece"sv }.sv() };
+            auto copy_error = tr_error{};
+            if (!tr_sys_path_copy(task.temp_file, staged_path, &copy_error))
+            {
+                staging_error = fmt::format("Could not stage Usenet batch file: {}", copy_error.message());
+                break;
+            }
+
+            batch_guard.files.push_back(staged_path);
+            staged_paths.push_back(staged_path);
+            article_size = std::max(article_size, task.article_size);
+        }
+
+        if (staging_error)
+        {
+            for (auto& task : batch)
+            {
+                finish_task(std::move(task), false, *staging_error);
+            }
+            continue;
+        }
+
+        auto const io_limit = usenetIoLimit();
+        auto const check_connection_budget = io_limit > NyuuBatchCheckConnections ? NyuuBatchCheckConnections : 0U;
+        auto const connection_count = std::clamp(
+            std::min({ std::size(batch), MaxNyuuBatchConnections, io_limit - check_connection_budget }),
+            size_t{ 1U },
+            io_limit);
+        auto const reserved_io_slots = std::min(io_limit, connection_count + check_connection_budget);
+        if (!acquireUsenetIoSlots(reserved_io_slots))
+        {
+            for (auto const& task : batch)
+            {
+                tr_sys_path_remove(task.temp_file);
+            }
             return;
         }
 
-        auto const upload_error = tr_usenet_upload_file(
+        auto const upload_error = tr_usenet_upload_files(
             {
                 .config_dir = config_dir_,
-                .file_path = task.temp_file,
-                .message_id = task.message_id,
-                .subject = fmt::format("Nashawk piece {}", task.message_id),
-                .yenc_name = fmt::format("{}.piece", task.message_id.substr(0, task.message_id.find('@'))),
-                .article_size = task.article_size,
+                .file_paths = std::move(staged_paths),
+                .article_size = article_size,
+                .connections = connection_count,
             });
-        releaseUsenetIoSlot();
+        releaseUsenetIoSlots(reserved_io_slots);
 
-        auto success = !upload_error;
-        auto error = upload_error.value_or(std::string{});
-        if (!success)
+        if (!upload_error)
         {
-            if (auto readback_error = verify_usenet_upload_after_error(
-                    config_dir_,
-                    task.message_id,
-                    task.temp_file,
-                    task.article_size);
-                readback_error)
+            tr_logAddTrace(
+                fmt::format(
+                    "Usenet batch uploaded {} piece(s) using {} nyuu upload connection(s)",
+                    std::size(batch),
+                    connection_count));
+            for (auto& task : batch)
             {
-                error += fmt::format("; readback check failed: {}", *readback_error);
+                finish_task(std::move(task), true, {});
+            }
+            continue;
+        }
+
+        for (auto& task : batch)
+        {
+            auto success = false;
+            auto error = *upload_error;
+            auto single_upload_error = std::optional<std::string>{ "single-piece retry skipped because Usenet IO is stopping" };
+            auto const single_retry_slots = std::min(usenetIoLimit(), size_t{ 2U });
+            if (acquireUsenetIoSlots(single_retry_slots))
+            {
+                single_upload_error = tr_usenet_upload_file(
+                    {
+                        .config_dir = config_dir_,
+                        .file_path = task.temp_file,
+                        .message_id = task.message_id,
+                        .subject = fmt::format("Nashawk piece {}", task.message_id),
+                        .yenc_name = fmt::format("{}.piece", message_id_local_part(task.message_id)),
+                        .article_size = task.article_size,
+                    });
+                releaseUsenetIoSlots(single_retry_slots);
+
+                if (!single_upload_error)
+                {
+                    tr_logAddInfo(
+                        fmt::format("Usenet batch upload failed, but single-piece retry for piece {} succeeded", task.piece));
+                    finish_task(std::move(task), true, {});
+                    continue;
+                }
+            }
+
+            error += fmt::format("; single-piece retry failed: {}", *single_upload_error);
+            if (acquireUsenetIoSlot())
+            {
+                if (auto readback_error = verify_usenet_upload_after_error(
+                        config_dir_,
+                        task.message_id,
+                        task.temp_file,
+                        task.article_size);
+                    readback_error)
+                {
+                    error += fmt::format("; readback check failed: {}", *readback_error);
+                }
+                else
+                {
+                    tr_logAddInfo(
+                        fmt::format(
+                            "Usenet upload for piece {} reported an error but readback succeeded; treating it as available",
+                            task.piece));
+                    success = true;
+                    error.clear();
+                }
+                releaseUsenetIoSlot();
             }
             else
             {
-                tr_logAddInfo(
-                    fmt::format(
-                        "Usenet upload for piece {} reported an error but readback succeeded; treating it as available",
-                        task.piece));
-                success = true;
-                error.clear();
+                error += "; readback check skipped because Usenet IO is stopping";
             }
-        }
 
-        onUsenetPieceUploadFinished(
-            std::move(task.info_hash_string),
-            task.piece,
-            std::move(task.message_id),
-            std::move(task.temp_file),
-            success,
-            std::move(error));
+            finish_task(std::move(task), success, std::move(error));
+        }
     }
 }
 
