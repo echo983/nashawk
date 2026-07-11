@@ -257,6 +257,8 @@ export class Torrent extends EventTarget {
 
     return {
       ...summary,
+      local_piece_count: summary.local_piece_count ?? summary.localPieceCount,
+      manifest_present: summary.manifest_present ?? summary.manifestPresent,
       piece_count: summary.piece_count ?? summary.pieceCount,
     };
   }
@@ -303,6 +305,72 @@ export class Torrent extends EventTarget {
   }
   getPercentDone() {
     return this.fields.percent_done;
+  }
+  getUsenetServingState() {
+    const summary = this.getUsenetPieceSummary();
+    if (!summary?.eligible || !summary.manifest_present) {
+      return null;
+    }
+
+    const pieceCount = summary.piece_count ?? 0;
+    if (pieceCount < 1) {
+      return null;
+    }
+
+    const local = summary.local_piece_count ?? 0;
+    const servable = summary.servable ?? 0;
+    const available = summary.available ?? 0;
+    const uploading = summary.uploading ?? 0;
+    const failed = summary.failed ?? 0;
+    const unknown = summary.unknown ?? 0;
+    const servablePercent = Math.min(servable / pieceCount, 1);
+
+    if (servable >= pieceCount) {
+      if (local >= pieceCount) {
+        return {
+          label: 'Local',
+          state: 'local',
+          title: 'All pieces are currently stored locally',
+        };
+      }
+
+      if (local === 0 && available >= pieceCount) {
+        return {
+          label: 'Usenet Ready',
+          percent: servablePercent,
+          state: 'usenet-ready',
+          title:
+            'All pieces are available from Usenet; local pieces were evicted',
+        };
+      }
+
+      return {
+        label: 'Mixed Ready',
+        percent: servablePercent,
+        state: 'mixed-ready',
+        title: 'All pieces are servable from local storage or Usenet',
+      };
+    }
+
+    if (local > 0 || available > 0 || uploading > 0) {
+      return {
+        label: 'Mixed',
+        percent: servablePercent,
+        state: 'mixed',
+        title: `${servable} of ${pieceCount} pieces are currently servable; ${failed} failed, ${unknown} unknown`,
+      };
+    }
+
+    return {
+      label: 'Incomplete',
+      percent: servablePercent,
+      state: 'incomplete',
+      title: 'Pieces are not yet locally present or available from Usenet',
+    };
+  }
+  isUsenetServableComplete() {
+    const state = this.getUsenetServingState();
+    return ['local', 'usenet-ready', 'mixed-ready'].includes(state?.state);
   }
   getStateString() {
     switch (this.getStatus()) {
@@ -640,6 +708,7 @@ Torrent.Fields.Stats = [
   'download_dir',
   'uploaded_ever',
   'upload_ratio',
+  'usenet_piece_summary',
   'webseeds_sending_to_us',
 ];
 

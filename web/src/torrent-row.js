@@ -24,9 +24,19 @@ const TorrentRendererHelper = {
       s.textContent = label_;
       label.append(s);
     }
+
+    const servingState = t.getUsenetServingState();
+    if (servingState) {
+      const s = document.createElement('span');
+      s.classList.add('torrent-storage-badge', servingState.state);
+      s.title = servingState.title;
+      s.textContent = servingState.label;
+      label.append(s);
+    }
   },
   getProgressInfo: (controller, t) => {
     const status = t.getStatus();
+    const servingState = t.getUsenetServingState();
     const classList = ['torrent-progress-bar'];
     let percent = 100;
     let ratio = null;
@@ -41,6 +51,9 @@ const TorrentRendererHelper = {
     } else if (status === Torrent._StatusCheck) {
       classList.push('verify');
       percent = t.getRecheckProgress() * 100;
+    } else if (t.isUsenetServableComplete() && servingState.state !== 'local') {
+      classList.push(servingState.state);
+      percent = (servingState.percent ?? 1) * 100;
     } else if (t.getLeftUntilDone() > 0) {
       classList.push('leech');
       percent = t.getPercentDone() * 100;
@@ -162,9 +175,29 @@ export class TorrentRendererFull {
     const sizeWhenDone = t.getSizeWhenDone();
     const totalSize = t.getTotalSize();
     const is_done = t.isDone() || t.isSeeding();
+    const servingState = t.getUsenetServingState();
     const s = [];
 
-    if (is_done) {
+    if (servingState && servingState.state !== 'local' && !is_done) {
+      const summary = t.getUsenetPieceSummary();
+      const pieceCount = summary?.piece_count ?? 0;
+      const servable = summary?.servable ?? 0;
+      const local = summary?.local_piece_count ?? 0;
+
+      s.push(
+        servingState.label,
+        ' - ',
+        fmt.number(servable),
+        ' of ',
+        fmt.number(pieceCount),
+        ' pieces servable',
+      );
+      if (servingState.state === 'usenet-ready') {
+        s.push(', local cache empty');
+      } else {
+        s.push(', ', fmt.number(local), ' local');
+      }
+    } else if (is_done) {
       if (totalSize === sizeWhenDone) {
         // seed: '698.05 MiB'
         s.push(fmt.size(totalSize));

@@ -610,6 +610,41 @@ a {
       border: 1px solid var(--color-border-default);
     }
 
+    .torrent-storage-badge {
+      border: 1px solid var(--color-border-starkest);
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      margin: 0 2px;
+      padding: 1px 6px;
+      text-transform: uppercase;
+      white-space: nowrap;
+
+      &.local {
+        background: var(--default-tinted);
+      }
+
+      &.usenet-ready {
+        background: var(--blue-200);
+        color: var(--white);
+      }
+
+      &.mixed-ready {
+        background: var(--green-100);
+        color: var(--white);
+      }
+
+      &.mixed {
+        background: var(--yellow-300);
+        color: var(--black);
+      }
+
+      &.incomplete {
+        background: var(--grey-200);
+        color: var(--black);
+      }
+    }
+
     .torrent-peer-details {
       grid-area: peers;
     }
@@ -738,6 +773,13 @@ a {
     &.magnet::before {
       background: var(--color-progressbar-magnet);
       color: #000;
+    }
+
+    &.usenet-ready::before,
+    &.mixed-ready::before {
+      background: var(--blue-200);
+      color: var(--color-progressbar-fg-2);
+      text-shadow: var(--progress-bar-shadow-2);
     }
 
     &.seed {
