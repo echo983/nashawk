@@ -11,6 +11,7 @@
 #include <cstddef> // size_t
 #include <cstdint>
 #include <ctime>
+#include <fstream>
 #include <future>
 #include <iterator> // for std::back_inserter
 #include <limits> // std::numeric_limits
@@ -227,6 +228,65 @@ struct TempFileGuard
     }
 
     filename = guard.release();
+    return {};
+}
+
+[[nodiscard]] std::optional<std::string> read_file_bytes(std::string_view const filename, std::vector<uint8_t>& setme)
+{
+    auto file = std::ifstream{ std::string{ filename }, std::ios::binary };
+    if (!file)
+    {
+        return "Could not read staged Usenet upload file";
+    }
+
+    file.seekg(0, std::ios::end);
+    auto const size = file.tellg();
+    if (size < 0)
+    {
+        return "Could not determine staged Usenet upload file size";
+    }
+
+    file.seekg(0, std::ios::beg);
+    setme.resize(static_cast<size_t>(size));
+    if (!std::empty(setme) &&
+        !file.read(reinterpret_cast<char*>(std::data(setme)), static_cast<std::streamsize>(std::size(setme))))
+    {
+        return "Could not read staged Usenet upload file contents";
+    }
+
+    return {};
+}
+
+[[nodiscard]] std::optional<std::string> verify_usenet_upload_after_error(
+    std::string_view const config_dir,
+    std::string_view const message_id,
+    std::string_view const temp_file,
+    uint64_t const expected_size)
+{
+    auto local = std::vector<uint8_t>{};
+    if (auto error = read_file_bytes(temp_file, local); error)
+    {
+        return error;
+    }
+
+    auto remote = std::vector<uint8_t>{};
+    if (auto error = tr_usenet_download_piece(
+            {
+                .config_dir = config_dir,
+                .message_id = message_id,
+                .expected_size = expected_size,
+            },
+            remote);
+        error)
+    {
+        return error;
+    }
+
+    if (local != remote)
+    {
+        return "Usenet readback did not match staged upload file";
+    }
+
     return {};
 }
 
@@ -3060,13 +3120,37 @@ void tr_session::usenetUploadWorker()
             });
         releaseUsenetIoSlot();
 
+        auto success = !upload_error;
+        auto error = upload_error.value_or(std::string{});
+        if (!success)
+        {
+            if (auto readback_error = verify_usenet_upload_after_error(
+                    config_dir_,
+                    task.message_id,
+                    task.temp_file,
+                    task.article_size);
+                readback_error)
+            {
+                error += fmt::format("; readback check failed: {}", *readback_error);
+            }
+            else
+            {
+                tr_logAddInfo(
+                    fmt::format(
+                        "Usenet upload for piece {} reported an error but readback succeeded; treating it as available",
+                        task.piece));
+                success = true;
+                error.clear();
+            }
+        }
+
         onUsenetPieceUploadFinished(
             std::move(task.info_hash_string),
             task.piece,
             std::move(task.message_id),
             std::move(task.temp_file),
-            !upload_error,
-            upload_error.value_or(std::string{}));
+            success,
+            std::move(error));
     }
 }
 
