@@ -144,6 +144,9 @@ auto constexpr Domain = "nashawk.local"sv;
         if (piece.article_count != 0U)
         {
             entry.try_emplace(key_article_count(), static_cast<int64_t>(piece.article_count));
+        }
+        if (piece.article_payload_size != 0U)
+        {
             entry.try_emplace(key_article_payload_size(), static_cast<int64_t>(piece.article_payload_size));
         }
         pieces.emplace_back(std::move(entry));

@@ -60,6 +60,7 @@ target_sources(libtransmission-test
         torrents-test.cc
         types-test.cc
         tr-peer-info-test.cc
+        usenet-service-test.cc
         usenet-piece-store-test.cc
         utils-test.cc
         values-test.cc

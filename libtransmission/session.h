@@ -1311,12 +1311,14 @@ private:
         tr_piece_index_t piece = 0U;
         std::string message_id;
         uint64_t expected_size = 0U;
+        tr_sha1_digest_t expected_hash = {};
     };
 
     struct UsenetDownloadResult
     {
         UsenetDownloadTask task;
         std::vector<uint8_t> data;
+        size_t article_count = 0U;
         std::optional<std::string> error;
     };
 

@@ -15,6 +15,7 @@
 #include <cstring>
 #include <fstream>
 #include <initializer_list>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -38,11 +39,13 @@
 #include <fmt/format.h>
 
 #include "libtransmission/error.h"
+#include "libtransmission/crypto-utils.h"
 #include "libtransmission/file.h"
 #include "libtransmission/quark.h"
 #include "libtransmission/session-settings.h"
 #include "libtransmission/subprocess.h"
 #include "libtransmission/tr-strbuf.h"
+#include "libtransmission/usenet-piece-store.h"
 #include "libtransmission/variant.h"
 
 using namespace std::literals;
@@ -1402,7 +1405,66 @@ std::variant<tr_usenet_article_exists_result, std::string> tr_usenet_article_exi
 #endif
 }
 
-std::optional<std::string> tr_usenet_download_piece(tr_usenet_download_request const& request, std::vector<uint8_t>& setme)
+std::optional<std::string> tr_usenet_assemble_piece_chain(
+    std::string_view const base_message_id,
+    uint64_t const expected_size,
+    std::optional<tr_sha1_digest_t> const& expected_hash,
+    tr_usenet_decoded_article_fetch const& fetch,
+    tr_usenet_download_result& setme)
+{
+    setme = {};
+    if (expected_size == 0U || expected_size > std::numeric_limits<size_t>::max())
+    {
+        return "Usenet piece chain requires a supported positive piece size";
+    }
+
+    setme.data.reserve(static_cast<size_t>(expected_size));
+    for (size_t article_index = 0U; article_index < TrUsenetMaxArticlesPerPiece; ++article_index)
+    {
+        auto const message_id = tr_usenet_piece_article_message_id(base_message_id, article_index);
+        if (!message_id)
+        {
+            setme = {};
+            return "Usenet piece chain has an invalid base Message-ID";
+        }
+
+        auto part = std::vector<uint8_t>{};
+        if (auto fetch_error = fetch(*message_id, part); fetch_error)
+        {
+            setme = {};
+            return fmt::format("Usenet piece chain article {} failed: {}", article_index, *fetch_error);
+        }
+        if (std::empty(part))
+        {
+            setme = {};
+            return fmt::format("Usenet piece chain article {} decoded to an empty part", article_index);
+        }
+        if (std::size(part) > expected_size - std::size(setme.data))
+        {
+            setme = {};
+            return fmt::format("Usenet piece chain article {} exceeds the expected piece size", article_index);
+        }
+
+        setme.data.insert(std::end(setme.data), std::begin(part), std::end(part));
+        setme.article_count = article_index + 1U;
+        if (std::size(setme.data) == expected_size)
+        {
+            if (expected_hash && tr_sha1::digest(setme.data) != *expected_hash)
+            {
+                setme = {};
+                return "Usenet piece chain failed its BitTorrent piece hash";
+            }
+            return {};
+        }
+    }
+
+    setme = {};
+    return fmt::format("Usenet piece chain exceeds the {} article safety limit", TrUsenetMaxArticlesPerPiece);
+}
+
+std::optional<std::string> tr_usenet_download_piece_chain(
+    tr_usenet_download_request const& request,
+    tr_usenet_download_result& setme)
 {
     auto const message_id = normalized_message_id(request.message_id);
     if (std::empty(message_id))
@@ -1434,12 +1496,26 @@ std::optional<std::string> tr_usenet_download_piece(tr_usenet_download_request c
         return group_error;
     }
 
-    auto body = std::string{};
-    if (auto body_error = connection.body(message_id, body); body_error)
+    auto const fetch =
+        [&connection](std::string_view const article_message_id, std::vector<uint8_t>& data) -> std::optional<std::string>
     {
-        return body_error;
-    }
+        auto body = std::string{};
+        if (auto body_error = connection.body(std::string{ article_message_id }, body); body_error)
+        {
+            return body_error;
+        }
 
-    return yenc_decode_body(body, request.expected_size, setme);
+        return yenc_decode_body(body, 0U, data);
+    };
+
+    return tr_usenet_assemble_piece_chain(message_id, request.expected_size, request.expected_hash, fetch, setme);
 #endif
+}
+
+std::optional<std::string> tr_usenet_download_piece(tr_usenet_download_request const& request, std::vector<uint8_t>& setme)
+{
+    auto result = tr_usenet_download_result{};
+    auto error = tr_usenet_download_piece_chain(request, result);
+    setme = std::move(result.data);
+    return error;
 }

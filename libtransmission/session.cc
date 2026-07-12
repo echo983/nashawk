@@ -347,6 +347,7 @@ struct TempDirGuard
                 .config_dir = config_dir,
                 .message_id = message_id,
                 .expected_size = expected_size,
+                .expected_hash = {},
             },
             remote);
         error)
@@ -3056,6 +3057,7 @@ void tr_session::fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t const 
             .piece = piece,
             .message_id = entry->message_id,
             .expected_size = tor.piece_size(piece),
+            .expected_hash = tor.piece_hash(piece),
         });
 
     tr_logAddTraceTor(&tor, fmt::format("Queued piece {} for Usenet download", piece));
@@ -3315,14 +3317,18 @@ void tr_session::usenetDownloadWorker()
             return;
         }
 
-        auto result = UsenetDownloadResult{ .task = std::move(task), .data = {}, .error = {} };
-        result.error = tr_usenet_download_piece(
+        auto result = UsenetDownloadResult{ .task = std::move(task), .data = {}, .article_count = 0U, .error = {} };
+        auto chain = tr_usenet_download_result{};
+        result.error = tr_usenet_download_piece_chain(
             {
                 .config_dir = config_dir_,
                 .message_id = result.task.message_id,
                 .expected_size = result.task.expected_size,
+                .expected_hash = result.task.expected_hash,
             },
-            result.data);
+            chain);
+        result.data = std::move(chain.data);
+        result.article_count = chain.article_count;
         releaseUsenetIoSlot();
 
         {
@@ -3353,12 +3359,22 @@ void tr_session::onUsenetPieceDownloaded(UsenetDownloadResult result)
     if (result.error)
     {
         tr_logAddWarnTor(tor, fmt::format("Could not download piece {} from Usenet: {}", result.task.piece, *result.error));
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        (void)usenet_piece_store_->set_message_id_state(
+            result.task.info_hash_string,
+            result.task.message_id,
+            tr_usenet_piece_state::Failed);
         return;
     }
 
     if (std::size(result.data) != tor->piece_size(result.task.piece))
     {
         tr_logAddWarnTor(tor, fmt::format("Usenet piece {} had an unexpected size", result.task.piece));
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        (void)usenet_piece_store_->set_message_id_state(
+            result.task.info_hash_string,
+            result.task.message_id,
+            tr_usenet_piece_state::Failed);
         return;
     }
 
@@ -3379,16 +3395,21 @@ void tr_session::onUsenetPieceDownloaded(UsenetDownloadResult result)
     {
         tr_logAddWarnTor(tor, fmt::format("Usenet piece {} failed its checksum test", result.task.piece));
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-        (void)usenet_piece_store_->set_piece_state(
+        (void)usenet_piece_store_->set_message_id_state(
             result.task.info_hash_string,
-            result.task.piece,
+            result.task.message_id,
             tr_usenet_piece_state::Failed);
         return;
     }
 
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-        (void)usenet_piece_store_->note_piece_local_activity(result.task.info_hash_string, result.task.piece);
+        (void)usenet_piece_store_->set_message_id_state(
+            result.task.info_hash_string,
+            result.task.message_id,
+            tr_usenet_piece_state::Available,
+            result.article_count,
+            0U);
     }
 
     tr_logAddTraceTor(tor, fmt::format("Usenet piece {} restored to local data", result.task.piece));
