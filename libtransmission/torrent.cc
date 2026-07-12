@@ -925,7 +925,7 @@ void tr_torrent::init(tr_ctor const& ctor)
 
     set_labels(ctor.labels());
 
-    session->addTorrent(this);
+    auto const usenet_init_error = session->addTorrent(this);
 
     TR_ASSERT(bytes_downloaded_.during_this_session() == 0U);
     TR_ASSERT(bytes_uploaded_.during_this_session() == 0);
@@ -948,6 +948,12 @@ void tr_torrent::init(tr_ctor const& ctor)
         loaded = tr_resume::load(this, resume_helper, tr_resume::All, ctor);
         set_dirty(was_dirty);
         tr_torrent_metainfo::migrate_file(session->torrentDir(), name(), info_hash_string(), ".torrent"sv);
+    }
+
+    if (usenet_init_error)
+    {
+        start_when_stable_ = false;
+        error().set_local_error(*usenet_init_error);
     }
 
     completeness_ = completion_.status();
@@ -1049,9 +1055,16 @@ void tr_torrent::set_metainfo(tr_torrent_metainfo tm)
 
     got_metainfo_(this);
     session->onMetadataCompleted(id());
-    session->ensureUsenetTorrent(this);
+    auto const usenet_init_error = session->ensureUsenetTorrent(this);
     set_dirty();
     mark_edited();
+
+    if (usenet_init_error)
+    {
+        tr_torrentStop(this);
+        this->on_announce_list_changed();
+        return;
+    }
 
     on_metainfo_completed();
     this->on_announce_list_changed();

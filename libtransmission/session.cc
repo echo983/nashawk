@@ -2496,21 +2496,21 @@ void tr_session::addIncoming(std::shared_ptr<tr_peer_socket> socket)
     tr_peerMgrAddIncoming(peer_mgr_.get(), std::move(socket));
 }
 
-void tr_session::addTorrent(tr_torrent* tor)
+std::optional<std::string> tr_session::addTorrent(tr_torrent* tor)
 {
     tor->init_id(torrents().add(tor));
     torrent_queue_.add(tor->id());
 
     tr_peerMgrAddTorrent(peer_mgr_.get(), tor);
 
-    ensureUsenetTorrent(tor);
+    return ensureUsenetTorrent(tor);
 }
 
-void tr_session::ensureUsenetTorrent(tr_torrent* const tor)
+std::optional<std::string> tr_session::ensureUsenetTorrent(tr_torrent* const tor)
 {
     if (usenet_piece_store_ == nullptr || tor == nullptr || !tor->has_metainfo())
     {
-        return;
+        return {};
     }
 
     auto error = std::optional<std::string>{};
@@ -2529,8 +2529,7 @@ void tr_session::ensureUsenetTorrent(tr_torrent* const tor)
         auto const message = *error;
         tr_logAddErrorTor(tor, std::move(*error));
         tor->error().set_local_error(message);
-        tr_torrentStop(tor);
-        return;
+        return message;
     }
 
     for (auto const piece : interrupted_uploads)
@@ -2543,6 +2542,7 @@ void tr_session::ensureUsenetTorrent(tr_torrent* const tor)
     }
 
     maybeQueueUsenetDiscovery(*tor);
+    return {};
 }
 
 void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)

@@ -1064,8 +1064,8 @@ public:
 
     void addIncoming(std::shared_ptr<tr_peer_socket> socket);
 
-    void addTorrent(tr_torrent* tor);
-    void ensureUsenetTorrent(tr_torrent* tor);
+    [[nodiscard]] std::optional<std::string> addTorrent(tr_torrent* tor);
+    [[nodiscard]] std::optional<std::string> ensureUsenetTorrent(tr_torrent* tor);
     void maybeQueueUsenetDiscovery(tr_torrent const& tor);
     void queueUsenetUploadsForLocalPieces(tr_torrent const& tor);
     [[nodiscard]] bool hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);

@@ -314,6 +314,77 @@ TEST_F(SessionTest, honorsSettings)
     tr_sessionClose(session, 0.5);
 }
 
+TEST_F(SessionTest, usenetInitializationFailureKeepsNewTorrentStopped)
+{
+    auto const config_dir = tr_pathbuf{ sandboxDir(), "/usenet-init-failure"sv };
+    ASSERT_TRUE(tr_sys_dir_create(config_dir, TR_SYS_DIR_CREATE_PARENTS, 0700));
+
+    auto settings = tr_sessionGetDefaultSettings();
+    auto* const settings_map = settings.get_if<tr_variant::Map>();
+    ASSERT_NE(settings_map, nullptr);
+    settings_map->insert_or_assign(TR_KEY_download_dir, tr_pathbuf{ config_dir, "/downloads"sv }.sv());
+    settings_map->insert_or_assign(TR_KEY_usenet_enabled, true);
+    settings_map->insert_or_assign(TR_KEY_usenet_check_article_size, int64_t{ 1 });
+    settings_map->insert_or_assign(TR_KEY_usenet_discovery_enabled, false);
+    settings_map->insert_or_assign(TR_KEY_peer_port_random_on_start, true);
+    settings_map->insert_or_assign(TR_KEY_port_forwarding_enabled, false);
+
+    auto* const session = tr_sessionInit(config_dir, false, settings);
+    ASSERT_NE(session, nullptr);
+
+    auto* const ctor = tr_ctorNew(session);
+    ASSERT_TRUE(ctor->set_metainfo_from_file(
+        tr_pathbuf{ LIBTRANSMISSION_TEST_ASSETS_DIR, "/archlinux-2025.05.01-x86_64.iso.torrent"sv }));
+    tr_ctorSetPaused(ctor, TR_FORCE, false);
+
+    auto* const tor = tr_torrentNew(ctor, nullptr);
+    ASSERT_NE(tor, nullptr);
+    tr_ctorFree(ctor);
+
+    auto const stats = tr_torrentStat(tor);
+    EXPECT_EQ(TR_STATUS_STOPPED, stats.activity);
+    EXPECT_EQ(tr_stat::Error::LocalError, stats.error);
+    EXPECT_NE(std::string::npos, stats.error_string.find("exceeds Usenet article size limit"));
+
+    tr_sessionClose(session, 0.5);
+}
+
+TEST_F(SessionTest, usenetManifestWriteFailureKeepsNewTorrentStopped)
+{
+    auto const config_dir = tr_pathbuf{ sandboxDir(), "/usenet-manifest-write-failure"sv };
+    ASSERT_TRUE(tr_sys_dir_create(config_dir, TR_SYS_DIR_CREATE_PARENTS, 0700));
+    createFileWithContents(tr_pathbuf{ config_dir, "/usenet-pieces"sv }, "not a directory", 15U);
+
+    auto settings = tr_sessionGetDefaultSettings();
+    auto* const settings_map = settings.get_if<tr_variant::Map>();
+    ASSERT_NE(settings_map, nullptr);
+    settings_map->insert_or_assign(TR_KEY_download_dir, tr_pathbuf{ config_dir, "/downloads"sv }.sv());
+    settings_map->insert_or_assign(TR_KEY_usenet_enabled, true);
+    settings_map->insert_or_assign(TR_KEY_usenet_check_article_size, int64_t{ 1024U * 1024U });
+    settings_map->insert_or_assign(TR_KEY_usenet_discovery_enabled, false);
+    settings_map->insert_or_assign(TR_KEY_peer_port_random_on_start, true);
+    settings_map->insert_or_assign(TR_KEY_port_forwarding_enabled, false);
+
+    auto* const session = tr_sessionInit(config_dir, false, settings);
+    ASSERT_NE(session, nullptr);
+
+    auto* const ctor = tr_ctorNew(session);
+    ASSERT_TRUE(ctor->set_metainfo_from_file(
+        tr_pathbuf{ LIBTRANSMISSION_TEST_ASSETS_DIR, "/archlinux-2025.05.01-x86_64.iso.torrent"sv }));
+    tr_ctorSetPaused(ctor, TR_FORCE, false);
+
+    auto* const tor = tr_torrentNew(ctor, nullptr);
+    ASSERT_NE(tor, nullptr);
+    tr_ctorFree(ctor);
+
+    auto const stats = tr_torrentStat(tor);
+    EXPECT_EQ(TR_STATUS_STOPPED, stats.activity);
+    EXPECT_EQ(tr_stat::Error::LocalError, stats.error);
+    EXPECT_EQ("Could not save Usenet piece manifest", stats.error_string);
+
+    tr_sessionClose(session, 0.5);
+}
+
 TEST_F(SessionTest, savesSettings)
 {
     // Baseline: confirm that these settings are disabled by default
