@@ -2552,6 +2552,12 @@ void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
         return;
     }
 
+    if (tor.piece_size() > usenet_piece_store_->max_article_size())
+    {
+        tr_logAddTraceTor(&tor, "Deferred Usenet discovery until multipart chain validation is available");
+        return;
+    }
+
     auto samples = std::vector<UsenetDiscoverySample>{};
     auto error = std::optional<std::string>{};
     {
@@ -3680,6 +3686,14 @@ void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t 
 {
     if (usenet_piece_store_ == nullptr || !tor.has_metainfo())
     {
+        return;
+    }
+
+    if (tor.piece_size(piece) > usenet_piece_store_->max_article_size())
+    {
+        tr_logAddTraceTor(
+            &tor,
+            fmt::format("Deferred multipart Usenet upload for piece {} until multipart publishing is available", piece));
         return;
     }
 

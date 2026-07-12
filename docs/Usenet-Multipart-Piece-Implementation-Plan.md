@@ -55,6 +55,11 @@ solely for that reason. Keep an explicit upload guard in
 `onUsenetPieceCompleted()` that skips multipart publication until Commit 4 is
 complete. The guard must leave the piece local and non-evictable.
 
+Also defer the legacy base-only discovery path for torrents whose standard
+piece size exceeds one article. Remove that guard only when Commit 5 can
+validate complete sampled chains; otherwise an existing base article could
+create a false availability claim during intermediate development.
+
 ### Tests
 
 Extend `usenet-piece-store-test.cc` or add `usenet-piece-chain-test.cc` with:
@@ -75,6 +80,7 @@ Extend `usenet-piece-store-test.cc` or add `usenet-piece-chain-test.cc` with:
 - All pure helper and existing manifest tests pass.
 - Adding a 4 MiB-piece torrent in Usenet mode does not stop or crash it.
 - Completing such a piece does not invoke Nyuu yet and cannot trigger eviction.
+- Legacy discovery remains `not_checked` for such a torrent.
 
 ## Commit 2: Manifest Version 2
 

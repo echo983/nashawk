@@ -16,6 +16,26 @@
 
 struct tr_torrent_metainfo;
 
+inline constexpr size_t TrUsenetMaxArticlesPerPiece = 1024U;
+
+struct tr_usenet_piece_part
+{
+    size_t index = 0U;
+    uint64_t offset = 0U;
+    uint64_t size = 0U;
+
+    constexpr bool operator==(tr_usenet_piece_part const&) const noexcept = default;
+};
+
+[[nodiscard]] std::string tr_usenet_piece_base_message_id(tr_sha1_digest_t const& piece_hash);
+[[nodiscard]] std::optional<std::string> tr_usenet_piece_article_message_id(
+    std::string_view base_message_id,
+    size_t article_index);
+[[nodiscard]] std::optional<size_t> tr_usenet_piece_article_count(uint64_t piece_size, uint64_t max_article_payload);
+[[nodiscard]] std::optional<std::vector<tr_usenet_piece_part>> tr_usenet_piece_part_plan(
+    uint64_t piece_size,
+    uint64_t max_article_payload);
+
 enum class tr_usenet_piece_state : uint8_t
 {
     Unknown,

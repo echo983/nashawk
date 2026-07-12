@@ -58,6 +58,49 @@ TEST_F(UsenetPieceStoreTest, stateNamesRoundtrip)
     EXPECT_FALSE(tr_usenet_discovery_state_from_name("not-a-discovery-state"sv));
 }
 
+TEST_F(UsenetPieceStoreTest, multipartMessageIdsAreDeterministicAndBounded)
+{
+    auto const metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto const base = tr_usenet_piece_base_message_id(metainfo.piece_hash(0));
+    auto const hash = tr_sha1_to_string(metainfo.piece_hash(0));
+
+    EXPECT_EQ(fmt::format("{}@nashawk.local", hash), base);
+    EXPECT_EQ(base, tr_usenet_piece_article_message_id(base, 0U));
+    EXPECT_EQ(fmt::format("{}.1@nashawk.local", hash), tr_usenet_piece_article_message_id(base, 1U));
+    EXPECT_EQ(fmt::format("{}.1023@nashawk.local", hash), tr_usenet_piece_article_message_id(base, 1023U));
+    EXPECT_FALSE(tr_usenet_piece_article_message_id(base, TrUsenetMaxArticlesPerPiece));
+    EXPECT_FALSE(tr_usenet_piece_article_message_id("not-a-piece@nashawk.local"sv, 0U));
+    EXPECT_FALSE(tr_usenet_piece_article_message_id(fmt::format("{}@example.com", hash), 0U));
+}
+
+TEST_F(UsenetPieceStoreTest, multipartPartPlanCoversPieceExactly)
+{
+    static auto constexpr MiB = uint64_t{ 1024U * 1024U };
+
+    auto plan = tr_usenet_piece_part_plan(2U * MiB, 2U * MiB);
+    ASSERT_TRUE(plan);
+    EXPECT_EQ((std::vector<tr_usenet_piece_part>{ { 0U, 0U, 2U * MiB } }), *plan);
+
+    plan = tr_usenet_piece_part_plan(4U * MiB, 2U * MiB);
+    ASSERT_TRUE(plan);
+    EXPECT_EQ((std::vector<tr_usenet_piece_part>{ { 0U, 0U, 2U * MiB }, { 1U, 2U * MiB, 2U * MiB } }), *plan);
+
+    plan = tr_usenet_piece_part_plan(4U * MiB + 1U, 2U * MiB);
+    ASSERT_TRUE(plan);
+    EXPECT_EQ(
+        (std::vector<tr_usenet_piece_part>{
+            { 0U, 0U, 2U * MiB },
+            { 1U, 2U * MiB, 2U * MiB },
+            { 2U, 4U * MiB, 1U },
+        }),
+        *plan);
+
+    EXPECT_FALSE(tr_usenet_piece_part_plan(2U * MiB, 0U));
+    EXPECT_FALSE(tr_usenet_piece_part_plan(0U, 2U * MiB));
+    EXPECT_EQ(TrUsenetMaxArticlesPerPiece, tr_usenet_piece_article_count(TrUsenetMaxArticlesPerPiece, 1U));
+    EXPECT_FALSE(tr_usenet_piece_article_count(TrUsenetMaxArticlesPerPiece + 1U, 1U));
+}
+
 TEST_F(UsenetPieceStoreTest, evictionEligibilityRequiresAvailableLocalOldPiece)
 {
     auto entry = tr_usenet_piece_entry{
@@ -304,14 +347,34 @@ TEST_F(UsenetPieceStoreTest, setPieceStateRejectsOutOfRangePiece)
     EXPECT_NE(std::string::npos, error->find("out of range"));
 }
 
-TEST_F(UsenetPieceStoreTest, rejectsOversizedPiece)
+TEST_F(UsenetPieceStoreTest, acceptsPieceSpanningMultipleArticles)
 {
     auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
     auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() - 1U };
 
-    auto error = store.ensure_torrent(metainfo);
+    EXPECT_FALSE(store.ensure_torrent(metainfo));
+    EXPECT_TRUE(store.load(metainfo.info_hash_string()));
+}
+
+TEST_F(UsenetPieceStoreTest, rejectsPieceExceedingArticleCountSafetyBound)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), 1U };
+
+    auto const error = store.ensure_torrent(metainfo);
     ASSERT_TRUE(error);
-    EXPECT_NE(std::string::npos, error->find("exceeds Usenet article size limit"));
+    EXPECT_NE(std::string::npos, error->find("1024 article safety limit"));
+    EXPECT_FALSE(store.load(metainfo.info_hash_string()));
+}
+
+TEST_F(UsenetPieceStoreTest, rejectsZeroArticlePayloadLimit)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), 0U };
+
+    auto const error = store.ensure_torrent(metainfo);
+    ASSERT_TRUE(error);
+    EXPECT_NE(std::string::npos, error->find("must be positive"));
     EXPECT_FALSE(store.load(metainfo.info_hash_string()));
 }
 
