@@ -2,6 +2,8 @@
 
 Status: Proposed.
 
+Implementation plan: [Usenet Multipart Piece Implementation Plan](Usenet-Multipart-Piece-Implementation-Plan.md)
+
 ## Goal
 
 Allow every supported BitTorrent piece to use the Usenet backend even when the
