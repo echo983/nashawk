@@ -195,6 +195,21 @@ TEST_F(SessionTest, peerId)
     tr_set_version_compat_enabled(true);
 }
 
+TEST_F(SessionTest, versionCompatibilityIdentity)
+{
+    tr_set_version_compat_enabled(true);
+    EXPECT_STREQ("4.1.2", tr_display_short_version_string());
+    EXPECT_STREQ("4.1.2 (f234716f3e)", tr_display_long_version_string());
+    EXPECT_STREQ("Transmission", tr_display_client_name());
+    EXPECT_STREQ("4.1.2", tr_display_user_agent_prefix());
+    EXPECT_STREQ("-TR4120-", tr_display_peer_id_prefix());
+
+    tr_set_version_compat_enabled(false);
+    EXPECT_STREQ(LONG_VERSION_STRING, tr_display_long_version_string());
+
+    tr_set_version_compat_enabled(true);
+}
+
 namespace current_time_mock
 {
 namespace
