@@ -40,6 +40,7 @@
 #include "libtransmission/error.h"
 #include "libtransmission/file.h"
 #include "libtransmission/quark.h"
+#include "libtransmission/session-settings.h"
 #include "libtransmission/subprocess.h"
 #include "libtransmission/tr-strbuf.h"
 #include "libtransmission/variant.h"
@@ -390,6 +391,46 @@ void read_dotenv_file(std::map<std::string, std::string>& values, std::string co
     return false;
 }
 
+[[nodiscard]] std::optional<std::string> check_nyuu_yencode_runtime()
+{
+#ifdef _WIN32
+    return {};
+#else
+    auto constexpr Script = R"JS(
+const cp = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const which = cp.spawnSync('which', ['nyuu'], { encoding: 'utf8' });
+if (which.status !== 0) process.exit(2);
+const nyuuBin = which.stdout.trim();
+if (!nyuuBin) process.exit(3);
+const realNyuuBin = fs.realpathSync(nyuuBin);
+const nyuuRoot = path.dirname(path.dirname(realNyuuBin));
+require(path.join(nyuuRoot, 'node_modules', 'yencode'));
+)JS"sv;
+
+    auto args = std::vector<std::string>{ "node", "-e", std::string{ Script } };
+    auto c_args = std::vector<char const*>{};
+    c_args.reserve(std::size(args) + 1U);
+    for (auto const& arg : args)
+    {
+        c_args.push_back(arg.c_str());
+    }
+    c_args.push_back(nullptr);
+
+    auto spawn_error = tr_error{};
+    if (!tr_spawn_sync(std::data(c_args), {}, {}, &spawn_error))
+    {
+        return fmt::format(
+            "Usenet mode requires nyuu's yencode module to load with the active Node.js runtime: {}. "
+            "Reinstall or rebuild nyuu under the same Node.js version used to start nashawk, and make sure PATH points to it.",
+            spawn_error.message());
+    }
+
+    return {};
+#endif
+}
+
 [[nodiscard]] std::string yenc_encode(std::string_view name, std::string_view payload)
 {
     auto out = std::string{};
@@ -643,6 +684,11 @@ void read_dotenv_file(std::map<std::string, std::string>& values, std::string co
     return out;
 }
 
+[[nodiscard]] uint64_t nyuu_single_article_size(uint64_t const payload_size)
+{
+    return payload_size * 2U + 8192U;
+}
+
 [[nodiscard]] std::string make_nyuu_config(UsenetConfig const& config, tr_usenet_upload_request const& request)
 {
     auto const subject = !std::empty(request.subject) ? request.subject : request.message_id;
@@ -656,13 +702,44 @@ void read_dotenv_file(std::map<std::string, std::string>& values, std::string co
     json += fmt::format("\"user\":\"{}\",\n", json_escape(config.username));
     json += fmt::format("\"password\":\"{}\",\n", json_escape(config.password));
     json += "\"connections\":1,\n";
-    json += fmt::format("\"article-size\":\"{}\",\n", request.article_size);
+    json += fmt::format("\"article-size\":\"{}\",\n", nyuu_single_article_size(request.article_size));
     json += fmt::format("\"from\":\"{}\",\n", json_escape(config.from));
     json += fmt::format("\"groups\":\"{}\",\n", json_escape(config.group));
     json += fmt::format("\"subject\":\"{}\",\n", json_escape(subject));
     json += fmt::format("\"message-id\":\"{}\",\n", json_escape(request.message_id));
     json += "\"keep-message-id\":true,\n";
     json += fmt::format("\"yenc-name\":\"{}\",\n", json_escape(yenc_name));
+    json += "\"check-connections\":1,\n";
+    json += "\"check-tries\":2,\n";
+    json += "\"check-delay\":\"5s\",\n";
+    json += "\"check-post-tries\":0,\n";
+    json += "\"out\":null,\n";
+    json += "\"overwrite\":true,\n";
+    json += "\"quiet\":true,\n";
+    json += "\"progress\":\"none\"\n";
+    json += "}\n";
+    return json;
+}
+
+[[nodiscard]] std::string make_nyuu_batch_config(UsenetConfig const& config, tr_usenet_upload_batch_request const& request)
+{
+    auto const connections = std::max<size_t>(1U, request.connections);
+
+    auto json = std::string{};
+    json += "{\n";
+    json += fmt::format("\"host\":\"{}\",\n", json_escape(config.host));
+    json += fmt::format("\"port\":\"{}\",\n", json_escape(config.port));
+    json += fmt::format("\"ssl\":{},\n", config.tls ? "true" : "false");
+    json += fmt::format("\"user\":\"{}\",\n", json_escape(config.username));
+    json += fmt::format("\"password\":\"{}\",\n", json_escape(config.password));
+    json += fmt::format("\"connections\":{},\n", connections);
+    json += fmt::format("\"article-size\":\"{}\",\n", nyuu_single_article_size(request.article_size));
+    json += fmt::format("\"from\":\"{}\",\n", json_escape(config.from));
+    json += fmt::format("\"groups\":\"{}\",\n", json_escape(config.group));
+    json += "\"subject\":\"Nashawk piece {fnamebase}@nashawk.local\",\n";
+    json += "\"message-id\":\"{fnamebase}@nashawk.local\",\n";
+    json += "\"keep-message-id\":true,\n";
+    json += "\"yenc-name\":\"{filename}\",\n";
     json += "\"check-connections\":1,\n";
     json += "\"check-tries\":2,\n";
     json += "\"check-delay\":\"5s\",\n";
@@ -832,6 +909,16 @@ public:
         return command("GROUP " + name, { 211 });
     }
 
+    [[nodiscard]] std::variant<tr_usenet_article_exists_result, std::string> stat(std::string const& message_id)
+    {
+        if (auto error = command("STAT <" + message_id + ">", { 223, 430 }); error)
+        {
+            return *error;
+        }
+
+        return last_code_ == 223 ? tr_usenet_article_exists_result::Exists : tr_usenet_article_exists_result::Missing;
+    }
+
     [[nodiscard]] std::optional<std::string> post(std::string const& article)
     {
         if (auto error = command("POST", { 340 }); error)
@@ -852,7 +939,7 @@ public:
 
         if (parse_code(line) != 240)
         {
-            return "Usenet POST failed";
+            return fmt::format("Usenet POST failed: {}", line);
         }
 
         return {};
@@ -1135,6 +1222,11 @@ std::optional<std::string> tr_usenet_startup_check(std::string_view const config
         return "Usenet mode requires nyuu in PATH";
     }
 
+    if (auto nyuu_error = check_nyuu_yencode_runtime(); nyuu_error)
+    {
+        return nyuu_error;
+    }
+
     auto error = std::string{};
     auto const config = load_usenet_config(config_dir, error);
     if (!config)
@@ -1147,7 +1239,7 @@ std::optional<std::string> tr_usenet_startup_check(std::string_view const config
         return post_error;
     }
 
-    auto const check_size = settings_size(settings, TR_KEY_usenet_check_article_size, 1024U * 1024U);
+    auto const check_size = settings_size(settings, TR_KEY_usenet_check_article_size, tr::DefaultUsenetCheckArticleSize);
     if (check_size > 64U)
     {
         if (auto post_error = check_post_read(*config, check_size, "configured"sv); post_error)
@@ -1215,6 +1307,99 @@ std::optional<std::string> tr_usenet_upload_file(tr_usenet_upload_request const&
     }
 
     return {};
+}
+
+std::optional<std::string> tr_usenet_upload_files(tr_usenet_upload_batch_request const& request)
+{
+    if (std::empty(request.file_paths))
+    {
+        return "Usenet batch upload requires at least one file";
+    }
+
+    if (request.article_size == 0U)
+    {
+        return "Usenet batch upload requires a positive article size";
+    }
+
+    auto error = std::string{};
+    auto const config = load_usenet_config(request.config_dir, error);
+    if (!config)
+    {
+        return error;
+    }
+
+    auto config_path = std::string{};
+    if (auto write_error = write_temp_file(
+            request.config_dir,
+            "nyuu-config"sv,
+            make_nyuu_batch_config(*config, request),
+            config_path);
+        write_error)
+    {
+        return write_error;
+    }
+
+    auto config_guard = TempPathGuard{ config_path };
+
+    auto args = std::vector<std::string>{
+        "nyuu",
+        "--config",
+        config_path,
+    };
+    args.insert(std::end(args), std::begin(request.file_paths), std::end(request.file_paths));
+
+    auto c_args = std::vector<char const*>{};
+    c_args.reserve(std::size(args) + 1U);
+    for (auto const& arg : args)
+    {
+        c_args.push_back(arg.c_str());
+    }
+    c_args.push_back(nullptr);
+
+    auto spawn_error = tr_error{};
+    if (!tr_spawn_sync(std::data(c_args), {}, {}, &spawn_error))
+    {
+        return fmt::format("nyuu batch upload failed: {}", spawn_error.message());
+    }
+
+    return {};
+}
+
+std::variant<tr_usenet_article_exists_result, std::string> tr_usenet_article_exists(
+    tr_usenet_article_exists_request const& request)
+{
+    auto const message_id = normalized_message_id(request.message_id);
+    if (std::empty(message_id))
+    {
+        return "Usenet article existence check requires a message id";
+    }
+
+    auto error = std::string{};
+    auto const config = load_usenet_config(request.config_dir, error);
+    if (!config)
+    {
+        return error;
+    }
+
+#ifdef _WIN32
+    return "Usenet article existence check is not implemented on Windows yet";
+#else
+    auto connection = NntpConnection{};
+    if (auto connect_error = connection.connect_to(*config); connect_error)
+    {
+        return *connect_error;
+    }
+    if (auto auth_error = connection.auth(*config); auth_error)
+    {
+        return *auth_error;
+    }
+    if (auto group_error = connection.group(config->group); group_error)
+    {
+        return *group_error;
+    }
+
+    return connection.stat(message_id);
+#endif
 }
 
 std::optional<std::string> tr_usenet_download_piece(tr_usenet_download_request const& request, std::vector<uint8_t>& setme)

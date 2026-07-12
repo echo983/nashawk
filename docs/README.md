@@ -32,6 +32,7 @@ Much of this documentation is out-of-date or could be improved. Pull requests ar
  * [Transmission's Peer ID and User-Agent headers](Peer-ID-and-User-Agent.md)
  * [Peer status text explained](Peer-Status-Text.md)
  * [Nashawk Usenet piece backend](Usenet-Piece-Backend-README.md)
+ * [Nashawk Usenet Web UI plan](Usenet-Web-UI-Plan.md)
  * [Nashawk Usenet piece backend design archive](Usenet-Piece-Backend.md)
  * [Nashawk Usenet implementation plan archive](Usenet-Piece-Backend-Plan.md)
  * [Nashawk Usenet local piece eviction plan archive](Usenet-Local-Piece-Eviction-Plan.md)

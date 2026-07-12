@@ -24,6 +24,15 @@ enum class tr_usenet_piece_state : uint8_t
     Failed,
 };
 
+enum class tr_usenet_discovery_state : uint8_t
+{
+    NotChecked,
+    Checking,
+    Available,
+    Missing,
+    Error,
+};
+
 struct tr_usenet_piece_entry
 {
     tr_usenet_piece_state state = tr_usenet_piece_state::Unknown;
@@ -32,21 +41,33 @@ struct tr_usenet_piece_entry
     std::string message_id;
 };
 
+struct tr_usenet_discovery_info
+{
+    tr_usenet_discovery_state state = tr_usenet_discovery_state::NotChecked;
+    uint64_t checked_at = 0U;
+    size_t sample_size = 0U;
+    std::vector<tr_piece_index_t> sampled_pieces;
+    std::string error;
+};
+
 struct tr_usenet_piece_manifest
 {
     uint32_t version = 1U;
     std::string info_hash_string;
     uint64_t piece_size = 0U;
     uint64_t max_article_size = 0U;
+    tr_usenet_discovery_info discovery;
     std::vector<tr_usenet_piece_entry> pieces;
 
     [[nodiscard]] size_t piece_count() const noexcept;
     [[nodiscard]] bool has_piece(tr_piece_index_t piece) const noexcept;
     [[nodiscard]] bool is_available(tr_piece_index_t piece) const noexcept;
     [[nodiscard]] bool has_message_id_state(std::string_view message_id, tr_usenet_piece_state state) const noexcept;
+    [[nodiscard]] bool has_meaningful_state() const noexcept;
 
     void set_piece_state(tr_piece_index_t piece, tr_usenet_piece_state state);
     void set_message_id_state(std::string_view message_id, tr_usenet_piece_state state);
+    void set_all_piece_states(tr_usenet_piece_state state);
 };
 
 class tr_usenet_piece_store
@@ -90,6 +111,12 @@ private:
 
 [[nodiscard]] std::string_view tr_usenet_piece_state_name(tr_usenet_piece_state state) noexcept;
 [[nodiscard]] std::optional<tr_usenet_piece_state> tr_usenet_piece_state_from_name(std::string_view name) noexcept;
+[[nodiscard]] std::string_view tr_usenet_discovery_state_name(tr_usenet_discovery_state state) noexcept;
+[[nodiscard]] std::optional<tr_usenet_discovery_state> tr_usenet_discovery_state_from_name(std::string_view name) noexcept;
+[[nodiscard]] std::vector<tr_piece_index_t> tr_usenet_discovery_sample_pieces(
+    std::string_view info_hash_string,
+    tr_piece_index_t piece_count,
+    size_t sample_size);
 [[nodiscard]] bool tr_usenet_piece_is_eviction_eligible(
     tr_usenet_piece_entry const& entry,
     bool has_local_piece,

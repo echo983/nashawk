@@ -66,29 +66,41 @@ TEST_F(SettingsTest, usenetEvictionSettingsHaveConservativeDefaults)
     auto settings = tr_session::Settings{};
 
     EXPECT_FALSE(settings.usenet_eviction_enabled);
+    EXPECT_TRUE(settings.usenet_discovery_enabled);
+    EXPECT_EQ(tr::DefaultUsenetCheckArticleSize, settings.usenet_check_article_size);
     EXPECT_EQ(60U, settings.usenet_eviction_min_age_minutes);
     EXPECT_EQ(0U, settings.usenet_cache_size_mib);
+    EXPECT_EQ(16U, settings.usenet_discovery_sample_size);
 }
 
 TEST_F(SettingsTest, canLoadAndSaveUsenetEvictionSettings)
 {
     auto settings = tr_session::Settings{};
 
-    auto map = tr_variant::Map{ 3U };
+    auto map = tr_variant::Map{ 6U };
     map.try_emplace(TR_KEY_usenet_eviction_enabled, true);
+    map.try_emplace(TR_KEY_usenet_check_article_size, int64_t{ 8U * 1024U * 1024U });
     map.try_emplace(TR_KEY_usenet_eviction_min_age_minutes, int64_t{ 5 });
     map.try_emplace(TR_KEY_usenet_cache_size_mib, int64_t{ 256 });
+    map.try_emplace(TR_KEY_usenet_discovery_enabled, false);
+    map.try_emplace(TR_KEY_usenet_discovery_sample_size, int64_t{ 8 });
 
     settings.load(tr_variant{ std::move(map) });
 
     EXPECT_TRUE(settings.usenet_eviction_enabled);
+    EXPECT_EQ(8U * 1024U * 1024U, settings.usenet_check_article_size);
     EXPECT_EQ(5U, settings.usenet_eviction_min_age_minutes);
     EXPECT_EQ(256U, settings.usenet_cache_size_mib);
+    EXPECT_FALSE(settings.usenet_discovery_enabled);
+    EXPECT_EQ(8U, settings.usenet_discovery_sample_size);
 
     auto const saved = settings.save();
     EXPECT_EQ(true, saved.value_if<bool>(TR_KEY_usenet_eviction_enabled));
+    EXPECT_EQ(8U * 1024U * 1024U, saved.value_if<int64_t>(TR_KEY_usenet_check_article_size));
     EXPECT_EQ(5, saved.value_if<int64_t>(TR_KEY_usenet_eviction_min_age_minutes));
     EXPECT_EQ(256, saved.value_if<int64_t>(TR_KEY_usenet_cache_size_mib));
+    EXPECT_EQ(false, saved.value_if<bool>(TR_KEY_usenet_discovery_enabled));
+    EXPECT_EQ(8, saved.value_if<int64_t>(TR_KEY_usenet_discovery_sample_size));
 }
 
 TEST_F(SettingsTest, canLoadDoubles)

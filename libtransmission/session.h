@@ -67,6 +67,7 @@
 #include "libtransmission/tr-lpd.h"
 #include "libtransmission/tr-macros.h"
 #include "libtransmission/types.h"
+#include "libtransmission/usenet-piece-store.h"
 #include "libtransmission/utils-ev.h"
 #include "libtransmission/verify.h"
 #include "libtransmission/web.h"
@@ -79,6 +80,36 @@ struct tr_pex;
 struct tr_torrent;
 struct struct_utp_context;
 struct tr_variant;
+
+struct tr_usenet_runtime_snapshot
+{
+    bool enabled = false;
+    bool eviction_enabled = false;
+    bool discovery_enabled = false;
+    size_t io_limit = 0U;
+    size_t io_active = 0U;
+    size_t upload_queue_size = 0U;
+    size_t download_queue_size = 0U;
+    size_t download_in_flight = 0U;
+    size_t upload_concurrency = 0U;
+    size_t eviction_min_age_minutes = 0U;
+    size_t cache_size_mib = 0U;
+    size_t discovery_sample_size = 0U;
+};
+
+struct tr_usenet_piece_summary
+{
+    bool eligible = false;
+    bool manifest_present = false;
+    size_t piece_count = 0U;
+    size_t local_piece_count = 0U;
+    size_t unknown = 0U;
+    size_t uploading = 0U;
+    size_t available = 0U;
+    size_t failed = 0U;
+    size_t servable = 0U;
+    tr_usenet_discovery_info discovery;
+};
 
 namespace tr::test
 {
@@ -1035,6 +1066,7 @@ public:
 
     void addTorrent(tr_torrent* tor);
     void ensureUsenetTorrent(tr_torrent* tor);
+    void maybeQueueUsenetDiscovery(tr_torrent const& tor);
     void queueUsenetUploadsForLocalPieces(tr_torrent const& tor);
     [[nodiscard]] bool hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
     void addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield);
@@ -1066,6 +1098,9 @@ public:
     {
         return settings().usenet_enabled;
     }
+
+    [[nodiscard]] tr_usenet_runtime_snapshot usenetRuntimeSnapshot();
+    [[nodiscard]] tr_usenet_piece_summary usenetPieceSummary(tr_torrent const& tor);
 
     constexpr void set_unused_cache_size_mbytes(size_t const mbytes)
     {
@@ -1235,7 +1270,9 @@ private:
     void startUsenetIoLimiter();
     void stopUsenetIoLimiter();
     [[nodiscard]] bool acquireUsenetIoSlot();
+    [[nodiscard]] bool acquireUsenetIoSlots(size_t count);
     void releaseUsenetIoSlot();
+    void releaseUsenetIoSlots(size_t count);
     [[nodiscard]] size_t usenetIoLimit() const;
     void startUsenetEvictionTimer();
     void scanUsenetEvictionCandidates();
@@ -1296,6 +1333,39 @@ private:
     std::vector<std::pair<std::string, tr_piece_index_t>> usenet_download_in_flight_;
     std::unique_ptr<std::thread> usenet_download_thread_;
     bool usenet_download_stopping_ = false;
+
+    struct UsenetDiscoverySample
+    {
+        tr_piece_index_t piece = 0U;
+        std::string message_id;
+    };
+
+    struct UsenetDiscoveryTask
+    {
+        tr_torrent_id_t torrent_id = 0;
+        std::string info_hash_string;
+        std::vector<UsenetDiscoverySample> samples;
+        size_t requested_sample_size = 0U;
+    };
+
+    struct UsenetDiscoveryResult
+    {
+        UsenetDiscoveryTask task;
+        tr_usenet_discovery_state state = tr_usenet_discovery_state::Error;
+        std::string error;
+    };
+
+    void startUsenetDiscoveryWorker();
+    void stopUsenetDiscoveryWorker();
+    void enqueueUsenetDiscoveryTask(UsenetDiscoveryTask task);
+    void usenetDiscoveryWorker();
+    void onUsenetDiscoveryFinished(UsenetDiscoveryResult result);
+
+    std::mutex usenet_discovery_mutex_;
+    std::condition_variable usenet_discovery_cv_;
+    std::deque<UsenetDiscoveryTask> usenet_discovery_queue_;
+    std::unique_ptr<std::thread> usenet_discovery_thread_;
+    bool usenet_discovery_stopping_ = false;
 
     /// trivial type fields
 

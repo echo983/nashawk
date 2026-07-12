@@ -15,6 +15,11 @@ This backend is functional but experimental. The first implementation has been
 validated with local two-daemon BitTorrent tests and real Usenet upload/read
 paths.
 
+Current field-test details are recorded in
+`docs/Usenet-Backend-Test-Status-2026-07-11.md`, including the Node/Nyuu ABI
+issue found during testing, real torrent upload results, local piece eviction,
+and Usenet readback validation.
+
 Validated paths:
 
 - startup validation for `nyuu`, Usenet credentials, posting, and readback
@@ -128,8 +133,14 @@ transmission-daemon --usenet-enabled
 Validate a provider article size at startup:
 
 ```sh
-transmission-daemon --usenet-enabled --usenet-check-article-size 262144
+transmission-daemon --usenet-enabled --usenet-check-article-size 3900000
 ```
+
+`usenet_check_article_size` defaults to `3900000` bytes. This is a practical
+near-4 MB payload limit that leaves room for yEnc expansion and article headers
+on providers that enforce a roughly 4 MB final article size. Set it higher only
+after the provider startup check confirms that larger payloads can be posted and
+read back.
 
 Configure the shared Usenet upload/download IO limit:
 
@@ -138,16 +149,25 @@ transmission-daemon --usenet-enabled --usenet-upload-concurrency 40
 ```
 
 The shared Usenet IO limit defaults to 4 and is clamped to 1 through 64. Upload
-workers and the download worker must acquire a slot from this same limit before
+workers and download workers must acquire a slot from this same limit before
 opening Usenet IO, so a setting of 40 will not create more than 40 concurrent
 Usenet operations.
+
+For stability with `nyuu` 0.4.x, Nashawk keeps concurrent `nyuu` upload
+processes low. Upload workers batch multiple completed pieces into each `nyuu`
+process, and Nyuu uses the configured shared Usenet IO limit through its own
+multi-connection uploader. Higher `usenet_upload_concurrency` values therefore
+raise the upload/download connection budget without requiring one process per
+connection. A single Nyuu batch is also locally capped to a conservative number
+of upload connections, with Nyuu's post-check connection reserved from the same
+shared IO budget.
 
 The equivalent settings keys are:
 
 ```json
 {
   "usenet_enabled": true,
-  "usenet_check_article_size": 262144,
+  "usenet_check_article_size": 3900000,
   "usenet_cache_size_mib": 0,
   "usenet_eviction_enabled": false,
   "usenet_eviction_min_age_minutes": 60,
@@ -178,6 +198,8 @@ check fails.
 Startup checks:
 
 - `nyuu` is present in `PATH`
+- the active `node` runtime can load the active Nyuu installation's bundled
+  `node_modules/yencode` module
 - `.env` or environment variables include required Usenet credentials
 - NNTP TCP/TLS connection succeeds
 - NNTP authentication succeeds
@@ -194,11 +216,16 @@ When a local piece completes and passes the torrent hash check:
 1. Nashawk checks the torrent's Usenet manifest.
 2. Pieces already marked `available` or `uploading` are skipped.
 3. The full piece is staged into a temporary local file.
-4. A temporary `nyuu` config is written with restrictive permissions.
-5. `nyuu` posts one yEnc article using the deterministic message-id.
-6. On success, the manifest entry becomes `available`.
-7. On failure, the manifest entry becomes `failed`.
-8. Temporary piece files and temporary `nyuu` configs are removed.
+4. Upload workers batch staged pieces and copy them into a private batch
+   directory using deterministic `<piece-hash>.piece` filenames.
+5. A temporary `nyuu` config is written with restrictive permissions.
+6. `nyuu` posts one yEnc article per staged piece using token-expanded
+   deterministic message-ids.
+7. On success, the manifest entry becomes `available`.
+8. On batch failure, Nashawk retries each piece through the conservative
+   single-file Nyuu path.
+9. On retry failure, Nashawk attempts per-piece readback before marking failed.
+10. Temporary piece files, batch files, and temporary `nyuu` configs are removed.
 
 Upload failure does not change normal torrent completion state.
 
@@ -260,7 +287,7 @@ Start a Usenet-enabled daemon:
   -w /path/to/downloads \
   -T -p 19191 -P 51441 --no-portmap \
   --usenet-enabled \
-  --usenet-check-article-size 262144 \
+  --usenet-check-article-size 3900000 \
   --usenet-upload-concurrency 40 \
   --log-level=trace \
   -e /path/to/daemon.log
@@ -304,6 +331,13 @@ Usenet piece N restored to local data
 `Usenet mode requires nyuu in PATH`
 
 Install `nyuu` and ensure the daemon environment can find it.
+
+`Usenet mode requires nyuu's yencode module to load with the active Node.js runtime`
+
+The daemon found `nyuu`, but the active `node` binary could not load that
+Nyuu installation's native yEnc module. Reinstall or rebuild Nyuu under the same
+Node.js version used to start the daemon, and make sure `PATH` resolves both
+`node` and `nyuu` to the intended installation.
 
 `Missing Usenet configuration`
 

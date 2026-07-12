@@ -309,6 +309,14 @@ export function createInfoSection(title, labels) {
   return { children, root };
 }
 
+export function isUsenetDebugEnabled() {
+  try {
+    return localStorage.getItem('nashawkUsenetDebug') === 'true';
+  } catch {
+    return false;
+  }
+}
+
 export function debounce(callback, wait = 100) {
   let timeout = null;
   return (...arguments_) => {

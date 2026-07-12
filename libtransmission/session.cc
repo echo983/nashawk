@@ -11,6 +11,7 @@
 #include <cstddef> // size_t
 #include <cstdint>
 #include <ctime>
+#include <fstream>
 #include <future>
 #include <iterator> // for std::back_inserter
 #include <limits> // std::numeric_limits
@@ -77,6 +78,10 @@ using namespace tr::Values;
 namespace
 {
 auto constexpr UsenetEvictionInterval = 5min;
+auto constexpr MaxConcurrentNyuuUploads = size_t{ 2U };
+auto constexpr MaxNyuuBatchFiles = size_t{ 40U };
+auto constexpr MaxNyuuBatchConnections = size_t{ 8U };
+auto constexpr NyuuBatchCheckConnections = size_t{ 1U };
 
 [[nodiscard]] bool punch_file_hole(std::string_view const path, uint64_t const offset, uint64_t const length, tr_error& error)
 {
@@ -160,9 +165,77 @@ struct TempFileGuard
     std::string path;
 };
 
+struct TempDirGuard
+{
+    explicit TempDirGuard(std::string path_in)
+        : path{ std::move(path_in) }
+    {
+    }
+
+    TempDirGuard(TempDirGuard const&) = delete;
+    TempDirGuard& operator=(TempDirGuard const&) = delete;
+
+    ~TempDirGuard()
+    {
+        for (auto const& file : files)
+        {
+            tr_sys_path_remove(file);
+        }
+
+        if (!std::empty(path))
+        {
+            tr_sys_path_remove(path);
+        }
+    }
+
+    [[nodiscard]] std::string release()
+    {
+        files.clear();
+        return std::exchange(path, {});
+    }
+
+    std::string path;
+    std::vector<std::string> files;
+};
+
 [[nodiscard]] std::string usenet_temp_dir(std::string_view config_dir)
 {
     return std::string{ tr_pathbuf{ config_dir, "/usenet-upload-temp"sv }.sv() };
+}
+
+[[nodiscard]] std::optional<std::string> make_usenet_batch_temp_dir(std::string_view const config_dir, std::string& dirname)
+{
+    auto const parent = usenet_temp_dir(config_dir);
+    if (auto error = tr_error{}; !tr_sys_dir_create(parent, TR_SYS_DIR_CREATE_PARENTS, 0700, &error))
+    {
+        return fmt::format("Could not create Usenet upload temp dir: {}", error.message());
+    }
+
+    auto path = std::string{ tr_pathbuf{ parent, "/batch.XXXXXX"sv }.sv() };
+    auto error = tr_error{};
+    if (!tr_sys_dir_create_temp(std::data(path), &error))
+    {
+        return fmt::format("Could not create Usenet batch temp dir: {}", error.message());
+    }
+
+    dirname = std::move(path);
+    return {};
+}
+
+[[nodiscard]] std::string message_id_local_part(std::string_view message_id)
+{
+    if (!std::empty(message_id) && message_id.front() == '<')
+    {
+        message_id.remove_prefix(1U);
+    }
+
+    if (!std::empty(message_id) && message_id.back() == '>')
+    {
+        message_id.remove_suffix(1U);
+    }
+
+    auto const at = message_id.find('@');
+    return std::string{ message_id.substr(0U, at) };
 }
 
 [[nodiscard]] std::optional<std::string> write_piece_to_temp_file(
@@ -227,6 +300,65 @@ struct TempFileGuard
     }
 
     filename = guard.release();
+    return {};
+}
+
+[[nodiscard]] std::optional<std::string> read_file_bytes(std::string_view const filename, std::vector<uint8_t>& setme)
+{
+    auto file = std::ifstream{ std::string{ filename }, std::ios::binary };
+    if (!file)
+    {
+        return "Could not read staged Usenet upload file";
+    }
+
+    file.seekg(0, std::ios::end);
+    auto const size = file.tellg();
+    if (size < 0)
+    {
+        return "Could not determine staged Usenet upload file size";
+    }
+
+    file.seekg(0, std::ios::beg);
+    setme.resize(static_cast<size_t>(size));
+    if (!std::empty(setme) &&
+        !file.read(reinterpret_cast<char*>(std::data(setme)), static_cast<std::streamsize>(std::size(setme))))
+    {
+        return "Could not read staged Usenet upload file contents";
+    }
+
+    return {};
+}
+
+[[nodiscard]] std::optional<std::string> verify_usenet_upload_after_error(
+    std::string_view const config_dir,
+    std::string_view const message_id,
+    std::string_view const temp_file,
+    uint64_t const expected_size)
+{
+    auto local = std::vector<uint8_t>{};
+    if (auto error = read_file_bytes(temp_file, local); error)
+    {
+        return error;
+    }
+
+    auto remote = std::vector<uint8_t>{};
+    if (auto error = tr_usenet_download_piece(
+            {
+                .config_dir = config_dir,
+                .message_id = message_id,
+                .expected_size = expected_size,
+            },
+            remote);
+        error)
+    {
+        return error;
+    }
+
+    if (local != remote)
+    {
+        return "Usenet readback did not match staged upload file";
+    }
+
     return {};
 }
 
@@ -932,6 +1064,7 @@ void tr_session::initImpl(init_data& data)
     {
         usenet_piece_store_ = std::make_unique<tr_usenet_piece_store>(config_dir_, settings_.usenet_check_article_size);
         startUsenetIoLimiter();
+        startUsenetDiscoveryWorker();
         startUsenetUploadWorker();
         startUsenetDownloadWorker();
         startUsenetEvictionTimer();
@@ -1564,9 +1697,10 @@ double tr_sessionGetRawSpeed_KBps(tr_session const* session, tr_direction dir)
 void tr_session::closeImplPart1(std::promise<void>* closed_promise, std::chrono::time_point<std::chrono::steady_clock> deadline)
 {
     is_closing_ = true;
-    stopUsenetIoLimiter();
+    stopUsenetDiscoveryWorker();
     stopUsenetDownloadWorker();
     stopUsenetUploadWorker();
+    stopUsenetIoLimiter();
 
     // close the low-hanging fruit that can be closed immediately w/o consequences
     utp_timer.reset();
@@ -2405,6 +2539,74 @@ void tr_session::ensureUsenetTorrent(tr_torrent* const tor)
             tr_logAddTraceTor(tor, fmt::format("Requeued interrupted Usenet upload for piece {}", piece));
         }
     }
+
+    maybeQueueUsenetDiscovery(*tor);
+}
+
+void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
+{
+    if (usenet_piece_store_ == nullptr || !settings_.usenet_discovery_enabled || !tor.has_metainfo())
+    {
+        return;
+    }
+
+    auto samples = std::vector<UsenetDiscoverySample>{};
+    auto error = std::optional<std::string>{};
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        auto manifest = usenet_piece_store_->load(tor.info_hash_string());
+        if (!manifest)
+        {
+            return;
+        }
+
+        if (manifest->has_meaningful_state() || manifest->discovery.state != tr_usenet_discovery_state::NotChecked)
+        {
+            return;
+        }
+
+        auto const sample_pieces = tr_usenet_discovery_sample_pieces(
+            tor.info_hash_string(),
+            manifest->piece_count(),
+            settings_.usenet_discovery_sample_size);
+        if (std::empty(sample_pieces))
+        {
+            return;
+        }
+
+        samples.reserve(std::size(sample_pieces));
+        for (auto const piece : sample_pieces)
+        {
+            samples.push_back({ .piece = piece, .message_id = manifest->pieces[piece].message_id });
+        }
+
+        manifest->discovery.state = tr_usenet_discovery_state::Checking;
+        manifest->discovery.checked_at = 0U;
+        manifest->discovery.sample_size = settings_.usenet_discovery_sample_size;
+        manifest->discovery.sampled_pieces = sample_pieces;
+        manifest->discovery.error.clear();
+        if (!usenet_piece_store_->save(*manifest))
+        {
+            error = "Could not save Usenet discovery state";
+        }
+    }
+
+    if (error)
+    {
+        tr_logAddWarnTor(&tor, std::move(*error));
+        return;
+    }
+
+    auto const sample_count = std::size(samples);
+    enqueueUsenetDiscoveryTask(
+        {
+            .torrent_id = tor.id(),
+            .info_hash_string = std::string{ tor.info_hash_string() },
+            .samples = std::move(samples),
+            .requested_sample_size = settings_.usenet_discovery_sample_size,
+        });
+
+    tr_logAddInfoTor(&tor, fmt::format("Queued Usenet discovery with {} sample piece(s)", sample_count));
 }
 
 void tr_session::queueUsenetUploadsForLocalPieces(tr_torrent const& tor)
@@ -2460,6 +2662,125 @@ size_t tr_session::usenetIoLimit() const
 {
     auto constexpr MaxUsenetIoConcurrency = size_t{ 64U };
     return std::clamp(settings_.usenet_upload_concurrency, size_t{ 1U }, MaxUsenetIoConcurrency);
+}
+
+tr_usenet_runtime_snapshot tr_session::usenetRuntimeSnapshot()
+{
+    auto snapshot = tr_usenet_runtime_snapshot{
+        .enabled = settings_.usenet_enabled,
+        .eviction_enabled = settings_.usenet_eviction_enabled,
+        .discovery_enabled = settings_.usenet_discovery_enabled,
+        .io_limit = usenetIoLimit(),
+        .io_active = 0U,
+        .upload_queue_size = 0U,
+        .download_queue_size = 0U,
+        .download_in_flight = 0U,
+        .upload_concurrency = std::min(usenetIoLimit(), MaxConcurrentNyuuUploads),
+        .eviction_min_age_minutes = settings_.usenet_eviction_min_age_minutes,
+        .cache_size_mib = settings_.usenet_cache_size_mib,
+        .discovery_sample_size = settings_.usenet_discovery_sample_size,
+    };
+
+    {
+        auto lock = std::lock_guard{ usenet_io_mutex_ };
+        snapshot.io_limit = usenet_io_limit_;
+        snapshot.io_active = usenet_io_active_;
+    }
+
+    {
+        auto lock = std::lock_guard{ usenet_upload_mutex_ };
+        snapshot.upload_queue_size = std::size(usenet_upload_queue_);
+    }
+
+    {
+        auto lock = std::lock_guard{ usenet_download_mutex_ };
+        snapshot.download_queue_size = std::size(usenet_download_queue_);
+        snapshot.download_in_flight = std::size(usenet_download_in_flight_);
+    }
+
+    if (!snapshot.enabled)
+    {
+        snapshot.io_limit = 0U;
+        snapshot.io_active = 0U;
+        snapshot.upload_queue_size = 0U;
+        snapshot.download_queue_size = 0U;
+        snapshot.download_in_flight = 0U;
+        snapshot.upload_concurrency = 0U;
+    }
+
+    return snapshot;
+}
+
+tr_usenet_piece_summary tr_session::usenetPieceSummary(tr_torrent const& tor)
+{
+    auto summary = tr_usenet_piece_summary{};
+    if (!tor.has_metainfo())
+    {
+        return summary;
+    }
+
+    summary.piece_count = tor.piece_count();
+
+    for (tr_piece_index_t piece = 0; piece < tor.piece_count(); ++piece)
+    {
+        if (tor.has_piece(piece))
+        {
+            ++summary.local_piece_count;
+        }
+    }
+
+    auto manifest = std::optional<tr_usenet_piece_manifest>{};
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        if (usenet_piece_store_ == nullptr)
+        {
+            summary.servable = summary.local_piece_count;
+            return summary;
+        }
+
+        summary.eligible = usenet_piece_store_->is_piece_size_eligible(tor.piece_size());
+        manifest = usenet_piece_store_->load(tor.info_hash_string());
+    }
+
+    if (!manifest)
+    {
+        summary.servable = summary.local_piece_count;
+        return summary;
+    }
+
+    summary.manifest_present = true;
+    summary.discovery = manifest->discovery;
+
+    for (tr_piece_index_t piece = 0; piece < tor.piece_count(); ++piece)
+    {
+        auto const state = piece < std::size(manifest->pieces) ? manifest->pieces[piece].state : tr_usenet_piece_state::Unknown;
+
+        switch (state)
+        {
+        case tr_usenet_piece_state::Unknown:
+            ++summary.unknown;
+            break;
+
+        case tr_usenet_piece_state::Uploading:
+            ++summary.uploading;
+            break;
+
+        case tr_usenet_piece_state::Available:
+            ++summary.available;
+            break;
+
+        case tr_usenet_piece_state::Failed:
+            ++summary.failed;
+            break;
+        }
+
+        if (tor.has_piece(piece) || state == tr_usenet_piece_state::Available)
+        {
+            ++summary.servable;
+        }
+    }
+
+    return summary;
 }
 
 void tr_session::startUsenetEvictionTimer()
@@ -2584,27 +2905,39 @@ void tr_session::stopUsenetIoLimiter()
 
 bool tr_session::acquireUsenetIoSlot()
 {
+    return acquireUsenetIoSlots(1U);
+}
+
+bool tr_session::acquireUsenetIoSlots(size_t const count)
+{
     auto lock = std::unique_lock{ usenet_io_mutex_ };
-    usenet_io_cv_.wait(lock, [this]() { return usenet_io_stopping_ || usenet_io_active_ < usenet_io_limit_; });
+    auto const slots = std::clamp(count, size_t{ 1U }, usenet_io_limit_);
+    usenet_io_cv_.wait(lock, [this, slots]() { return usenet_io_stopping_ || usenet_io_active_ + slots <= usenet_io_limit_; });
 
     if (usenet_io_stopping_)
     {
         return false;
     }
 
-    ++usenet_io_active_;
+    usenet_io_active_ += slots;
     return true;
 }
 
 void tr_session::releaseUsenetIoSlot()
 {
+    releaseUsenetIoSlots(1U);
+}
+
+void tr_session::releaseUsenetIoSlots(size_t const count)
+{
     {
         auto lock = std::lock_guard{ usenet_io_mutex_ };
-        TR_ASSERT(usenet_io_active_ > 0U);
-        --usenet_io_active_;
+        auto const slots = std::max<size_t>(1U, count);
+        TR_ASSERT(usenet_io_active_ >= slots);
+        usenet_io_active_ -= slots;
     }
 
-    usenet_io_cv_.notify_one();
+    usenet_io_cv_.notify_all();
 }
 
 void tr_session::addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield)
@@ -2684,6 +3017,184 @@ void tr_session::fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t const 
         });
 
     tr_logAddTraceTor(&tor, fmt::format("Queued piece {} for Usenet download", piece));
+}
+
+void tr_session::startUsenetDiscoveryWorker()
+{
+    if (usenet_discovery_thread_ != nullptr)
+    {
+        return;
+    }
+
+    usenet_discovery_stopping_ = false;
+    usenet_discovery_thread_ = std::make_unique<std::thread>(&tr_session::usenetDiscoveryWorker, this);
+}
+
+void tr_session::stopUsenetDiscoveryWorker()
+{
+    {
+        auto lock = std::lock_guard{ usenet_discovery_mutex_ };
+        usenet_discovery_stopping_ = true;
+    }
+    usenet_discovery_cv_.notify_one();
+
+    if (usenet_discovery_thread_ != nullptr && usenet_discovery_thread_->joinable())
+    {
+        usenet_discovery_thread_->join();
+    }
+
+    usenet_discovery_thread_.reset();
+
+    {
+        auto lock = std::lock_guard{ usenet_discovery_mutex_ };
+        usenet_discovery_queue_.clear();
+    }
+}
+
+void tr_session::enqueueUsenetDiscoveryTask(UsenetDiscoveryTask task)
+{
+    {
+        auto lock = std::lock_guard{ usenet_discovery_mutex_ };
+        if (usenet_discovery_stopping_)
+        {
+            return;
+        }
+
+        usenet_discovery_queue_.push_back(std::move(task));
+    }
+
+    usenet_discovery_cv_.notify_one();
+}
+
+void tr_session::usenetDiscoveryWorker()
+{
+    for (;;)
+    {
+        auto task = UsenetDiscoveryTask{};
+        {
+            auto lock = std::unique_lock{ usenet_discovery_mutex_ };
+            usenet_discovery_cv_.wait(
+                lock,
+                [this]() { return usenet_discovery_stopping_ || !std::empty(usenet_discovery_queue_); });
+
+            if (usenet_discovery_stopping_)
+            {
+                return;
+            }
+
+            task = std::move(usenet_discovery_queue_.front());
+            usenet_discovery_queue_.pop_front();
+        }
+
+        auto result = UsenetDiscoveryResult{
+            .task = std::move(task),
+            .state = tr_usenet_discovery_state::Available,
+            .error = {},
+        };
+
+        for (auto const& sample : result.task.samples)
+        {
+            if (!acquireUsenetIoSlot())
+            {
+                result.state = tr_usenet_discovery_state::Error;
+                result.error = "Usenet IO is stopping";
+                break;
+            }
+
+            auto exists = tr_usenet_article_exists(
+                {
+                    .config_dir = config_dir_,
+                    .message_id = sample.message_id,
+                });
+            releaseUsenetIoSlot();
+
+            if (auto const* state = std::get_if<tr_usenet_article_exists_result>(&exists); state != nullptr)
+            {
+                if (*state == tr_usenet_article_exists_result::Missing)
+                {
+                    result.state = tr_usenet_discovery_state::Missing;
+                    result.error = fmt::format("Sample piece {} was missing from Usenet", sample.piece);
+                    break;
+                }
+
+                continue;
+            }
+
+            result.state = tr_usenet_discovery_state::Error;
+            result.error = std::get<std::string>(exists);
+            break;
+        }
+
+        {
+            auto lock = std::lock_guard{ usenet_discovery_mutex_ };
+            if (usenet_discovery_stopping_)
+            {
+                return;
+            }
+        }
+
+        queue_session_thread([this, result = std::move(result)]() mutable { onUsenetDiscoveryFinished(std::move(result)); });
+    }
+}
+
+void tr_session::onUsenetDiscoveryFinished(UsenetDiscoveryResult result)
+{
+    auto* const tor = torrents_.get(result.task.torrent_id);
+
+    auto store_error = std::optional<std::string>{};
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        if (usenet_piece_store_ == nullptr)
+        {
+            return;
+        }
+
+        auto manifest = usenet_piece_store_->load(result.task.info_hash_string);
+        if (!manifest || manifest->discovery.state != tr_usenet_discovery_state::Checking)
+        {
+            return;
+        }
+
+        manifest->discovery.state = result.state;
+        manifest->discovery.checked_at = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+        manifest->discovery.sample_size = result.task.requested_sample_size;
+        manifest->discovery.error = result.error;
+
+        if (result.state == tr_usenet_discovery_state::Available && !manifest->has_meaningful_state())
+        {
+            manifest->set_all_piece_states(tr_usenet_piece_state::Available);
+        }
+
+        if (!usenet_piece_store_->save(*manifest))
+        {
+            store_error = "Could not save Usenet discovery result";
+        }
+    }
+
+    if (store_error)
+    {
+        tr_logAddWarn(std::move(*store_error));
+        return;
+    }
+
+    if (tor != nullptr)
+    {
+        if (result.state == tr_usenet_discovery_state::Available)
+        {
+            tr_logAddInfoTor(
+                tor,
+                fmt::format(
+                    "Usenet discovery passed with {} sample piece(s); torrent marked Usenet-available",
+                    std::size(result.task.samples)));
+        }
+        else
+        {
+            tr_logAddInfoTor(
+                tor,
+                fmt::format("Usenet discovery ended as {}: {}", tr_usenet_discovery_state_name(result.state), result.error));
+        }
+    }
 }
 
 void tr_session::startUsenetDownloadWorker()
@@ -2848,7 +3359,7 @@ void tr_session::startUsenetUploadWorker()
         return;
     }
 
-    auto const upload_concurrency = usenetIoLimit();
+    auto const upload_concurrency = std::min(usenetIoLimit(), MaxConcurrentNyuuUploads);
 
     usenet_upload_stopping_ = false;
     usenet_upload_threads_.reserve(upload_concurrency);
@@ -2914,7 +3425,7 @@ void tr_session::usenetUploadWorker()
 {
     for (;;)
     {
-        auto task = UsenetUploadTask{};
+        auto batch = std::vector<UsenetUploadTask>{};
         {
             auto lock = std::unique_lock{ usenet_upload_mutex_ };
             usenet_upload_cv_.wait(lock, [this]() { return usenet_upload_stopping_ || !std::empty(usenet_upload_queue_); });
@@ -2924,34 +3435,208 @@ void tr_session::usenetUploadWorker()
                 return;
             }
 
-            task = std::move(usenet_upload_queue_.front());
+            batch.push_back(std::move(usenet_upload_queue_.front()));
             usenet_upload_queue_.pop_front();
+            while (std::size(batch) < MaxNyuuBatchFiles && !std::empty(usenet_upload_queue_))
+            {
+                batch.push_back(std::move(usenet_upload_queue_.front()));
+                usenet_upload_queue_.pop_front();
+            }
         }
 
-        if (!acquireUsenetIoSlot())
+        auto finish_task = [this](UsenetUploadTask task, bool const success, std::string error)
         {
-            tr_sys_path_remove(task.temp_file);
+            onUsenetPieceUploadFinished(
+                std::move(task.info_hash_string),
+                task.piece,
+                std::move(task.message_id),
+                std::move(task.temp_file),
+                success,
+                std::move(error));
+        };
+
+        auto batch_dir = std::string{};
+        if (auto dir_error = make_usenet_batch_temp_dir(config_dir_, batch_dir); dir_error)
+        {
+            for (auto& task : batch)
+            {
+                finish_task(std::move(task), false, *dir_error);
+            }
+            continue;
+        }
+
+        auto batch_guard = TempDirGuard{ batch_dir };
+        auto staged_paths = std::vector<std::string>{};
+        staged_paths.reserve(std::size(batch));
+        auto article_size = uint64_t{};
+        auto staging_error = std::optional<std::string>{};
+
+        for (auto const& task : batch)
+        {
+            auto const local_part = message_id_local_part(task.message_id);
+            if (std::empty(local_part))
+            {
+                staging_error = fmt::format("Could not stage Usenet batch file for invalid message id '{}'", task.message_id);
+                break;
+            }
+
+            auto const staged_path = std::string{ tr_pathbuf{ batch_dir, '/', local_part, ".piece"sv }.sv() };
+            auto copy_error = tr_error{};
+            if (!tr_sys_path_copy(task.temp_file, staged_path, &copy_error))
+            {
+                staging_error = fmt::format("Could not stage Usenet batch file: {}", copy_error.message());
+                break;
+            }
+
+            batch_guard.files.push_back(staged_path);
+            staged_paths.push_back(staged_path);
+            article_size = std::max(article_size, task.article_size);
+        }
+
+        if (staging_error)
+        {
+            for (auto& task : batch)
+            {
+                finish_task(std::move(task), false, *staging_error);
+            }
+            continue;
+        }
+
+        auto const io_limit = usenetIoLimit();
+        auto const check_connection_budget = io_limit > NyuuBatchCheckConnections ? NyuuBatchCheckConnections : 0U;
+        auto const connection_count = std::clamp(
+            std::min({ std::size(batch), MaxNyuuBatchConnections, io_limit - check_connection_budget }),
+            size_t{ 1U },
+            io_limit);
+        auto const reserved_io_slots = std::min(io_limit, connection_count + check_connection_budget);
+        if (!acquireUsenetIoSlots(reserved_io_slots))
+        {
+            for (auto const& task : batch)
+            {
+                tr_sys_path_remove(task.temp_file);
+            }
             return;
         }
 
-        auto const upload_error = tr_usenet_upload_file(
+        auto const upload_error = tr_usenet_upload_files(
             {
                 .config_dir = config_dir_,
-                .file_path = task.temp_file,
-                .message_id = task.message_id,
-                .subject = fmt::format("Nashawk piece {}", task.message_id),
-                .yenc_name = fmt::format("{}.piece", task.message_id.substr(0, task.message_id.find('@'))),
-                .article_size = task.article_size,
+                .file_paths = std::move(staged_paths),
+                .article_size = article_size,
+                .connections = connection_count,
             });
-        releaseUsenetIoSlot();
+        releaseUsenetIoSlots(reserved_io_slots);
 
-        onUsenetPieceUploadFinished(
-            std::move(task.info_hash_string),
-            task.piece,
-            std::move(task.message_id),
-            std::move(task.temp_file),
-            !upload_error,
-            upload_error.value_or(std::string{}));
+        if (!upload_error)
+        {
+            tr_logAddTrace(
+                fmt::format(
+                    "Usenet batch uploaded {} piece(s) using {} nyuu upload connection(s)",
+                    std::size(batch),
+                    connection_count));
+            for (auto& task : batch)
+            {
+                finish_task(std::move(task), true, {});
+            }
+            continue;
+        }
+
+        auto readback_success_count = size_t{};
+        auto single_retry_success_count = size_t{};
+        auto failed_count = size_t{};
+
+        for (auto& task : batch)
+        {
+            auto success = false;
+            auto error = *upload_error;
+
+            if (acquireUsenetIoSlot())
+            {
+                if (auto readback_error = verify_usenet_upload_after_error(
+                        config_dir_,
+                        task.message_id,
+                        task.temp_file,
+                        task.article_size);
+                    readback_error)
+                {
+                    error += fmt::format("; batch readback check failed: {}", *readback_error);
+                }
+                else
+                {
+                    ++readback_success_count;
+                    finish_task(std::move(task), true, {});
+                    releaseUsenetIoSlot();
+                    continue;
+                }
+                releaseUsenetIoSlot();
+            }
+            else
+            {
+                error += "; batch readback check skipped because Usenet IO is stopping";
+            }
+
+            auto single_upload_error = std::optional<std::string>{ "single-piece retry skipped because Usenet IO is stopping" };
+            auto const single_retry_slots = std::min(usenetIoLimit(), size_t{ 2U });
+            if (acquireUsenetIoSlots(single_retry_slots))
+            {
+                single_upload_error = tr_usenet_upload_file(
+                    {
+                        .config_dir = config_dir_,
+                        .file_path = task.temp_file,
+                        .message_id = task.message_id,
+                        .subject = fmt::format("Nashawk piece {}", task.message_id),
+                        .yenc_name = fmt::format("{}.piece", message_id_local_part(task.message_id)),
+                        .article_size = task.article_size,
+                    });
+                releaseUsenetIoSlots(single_retry_slots);
+
+                if (!single_upload_error)
+                {
+                    ++single_retry_success_count;
+                    finish_task(std::move(task), true, {});
+                    continue;
+                }
+            }
+
+            error += fmt::format("; single-piece retry failed: {}", *single_upload_error);
+            if (acquireUsenetIoSlot())
+            {
+                if (auto retry_readback_error = verify_usenet_upload_after_error(
+                        config_dir_,
+                        task.message_id,
+                        task.temp_file,
+                        task.article_size);
+                    retry_readback_error)
+                {
+                    error += fmt::format("; retry readback check failed: {}", *retry_readback_error);
+                }
+                else
+                {
+                    ++readback_success_count;
+                    success = true;
+                    error.clear();
+                }
+
+                releaseUsenetIoSlot();
+            }
+            else
+            {
+                error += "; retry readback check skipped because Usenet IO is stopping";
+            }
+
+            if (!success)
+            {
+                ++failed_count;
+            }
+            finish_task(std::move(task), success, std::move(error));
+        }
+
+        tr_logAddInfo(
+            fmt::format(
+                "Usenet batch upload reported an error; recovered {} by readback, {} by single-piece retry, {} failed",
+                readback_success_count,
+                single_retry_success_count,
+                failed_count));
     }
 }
 
