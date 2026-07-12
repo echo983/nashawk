@@ -6,11 +6,14 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
+
+#include "libtransmission/types.h"
 
 class tr_variant;
 
@@ -37,7 +40,17 @@ struct tr_usenet_download_request
     std::string_view config_dir;
     std::string_view message_id;
     uint64_t expected_size = 0U;
+    std::optional<tr_sha1_digest_t> expected_hash;
 };
+
+struct tr_usenet_download_result
+{
+    std::vector<uint8_t> data;
+    size_t article_count = 0U;
+};
+
+using tr_usenet_decoded_article_fetch = std::function<
+    std::optional<std::string>(std::string_view message_id, std::vector<uint8_t>& setme)>;
 
 struct tr_usenet_article_exists_request
 {
@@ -59,3 +72,12 @@ enum class tr_usenet_article_exists_result : uint8_t
 [[nodiscard]] std::optional<std::string> tr_usenet_download_piece(
     tr_usenet_download_request const& request,
     std::vector<uint8_t>& setme);
+[[nodiscard]] std::optional<std::string> tr_usenet_assemble_piece_chain(
+    std::string_view base_message_id,
+    uint64_t expected_size,
+    std::optional<tr_sha1_digest_t> const& expected_hash,
+    tr_usenet_decoded_article_fetch const& fetch,
+    tr_usenet_download_result& setme);
+[[nodiscard]] std::optional<std::string> tr_usenet_download_piece_chain(
+    tr_usenet_download_request const& request,
+    tr_usenet_download_result& setme);

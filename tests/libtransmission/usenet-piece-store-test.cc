@@ -58,6 +58,49 @@ TEST_F(UsenetPieceStoreTest, stateNamesRoundtrip)
     EXPECT_FALSE(tr_usenet_discovery_state_from_name("not-a-discovery-state"sv));
 }
 
+TEST_F(UsenetPieceStoreTest, multipartMessageIdsAreDeterministicAndBounded)
+{
+    auto const metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto const base = tr_usenet_piece_base_message_id(metainfo.piece_hash(0));
+    auto const hash = tr_sha1_to_string(metainfo.piece_hash(0));
+
+    EXPECT_EQ(fmt::format("{}@nashawk.local", hash), base);
+    EXPECT_EQ(base, tr_usenet_piece_article_message_id(base, 0U));
+    EXPECT_EQ(fmt::format("{}.1@nashawk.local", hash), tr_usenet_piece_article_message_id(base, 1U));
+    EXPECT_EQ(fmt::format("{}.1023@nashawk.local", hash), tr_usenet_piece_article_message_id(base, 1023U));
+    EXPECT_FALSE(tr_usenet_piece_article_message_id(base, TrUsenetMaxArticlesPerPiece));
+    EXPECT_FALSE(tr_usenet_piece_article_message_id("not-a-piece@nashawk.local"sv, 0U));
+    EXPECT_FALSE(tr_usenet_piece_article_message_id(fmt::format("{}@example.com", hash), 0U));
+}
+
+TEST_F(UsenetPieceStoreTest, multipartPartPlanCoversPieceExactly)
+{
+    static auto constexpr MiB = uint64_t{ 1024U * 1024U };
+
+    auto plan = tr_usenet_piece_part_plan(2U * MiB, 2U * MiB);
+    ASSERT_TRUE(plan);
+    EXPECT_EQ((std::vector<tr_usenet_piece_part>{ { 0U, 0U, 2U * MiB } }), *plan);
+
+    plan = tr_usenet_piece_part_plan(4U * MiB, 2U * MiB);
+    ASSERT_TRUE(plan);
+    EXPECT_EQ((std::vector<tr_usenet_piece_part>{ { 0U, 0U, 2U * MiB }, { 1U, 2U * MiB, 2U * MiB } }), *plan);
+
+    plan = tr_usenet_piece_part_plan(4U * MiB + 1U, 2U * MiB);
+    ASSERT_TRUE(plan);
+    EXPECT_EQ(
+        (std::vector<tr_usenet_piece_part>{
+            { 0U, 0U, 2U * MiB },
+            { 1U, 2U * MiB, 2U * MiB },
+            { 2U, 4U * MiB, 1U },
+        }),
+        *plan);
+
+    EXPECT_FALSE(tr_usenet_piece_part_plan(2U * MiB, 0U));
+    EXPECT_FALSE(tr_usenet_piece_part_plan(0U, 2U * MiB));
+    EXPECT_EQ(TrUsenetMaxArticlesPerPiece, tr_usenet_piece_article_count(TrUsenetMaxArticlesPerPiece, 1U));
+    EXPECT_FALSE(tr_usenet_piece_article_count(TrUsenetMaxArticlesPerPiece + 1U, 1U));
+}
+
 TEST_F(UsenetPieceStoreTest, evictionEligibilityRequiresAvailableLocalOldPiece)
 {
     auto entry = tr_usenet_piece_entry{
@@ -94,6 +137,7 @@ TEST_F(UsenetPieceStoreTest, ensureTorrentCreatesManifest)
 
     auto manifest = store.load(metainfo.info_hash_string());
     ASSERT_TRUE(manifest);
+    EXPECT_EQ(TrUsenetPieceManifestVersion, manifest->version);
     EXPECT_EQ(metainfo.info_hash_string(), manifest->info_hash_string);
     EXPECT_EQ(metainfo.piece_size(), manifest->piece_size);
     EXPECT_EQ(metainfo.piece_count(), manifest->piece_count());
@@ -115,6 +159,7 @@ TEST_F(UsenetPieceStoreTest, savesPieceState)
 
     auto loaded = store.load(metainfo.info_hash_string());
     ASSERT_TRUE(loaded);
+    EXPECT_EQ(TrUsenetPieceManifestVersion, loaded->version);
     EXPECT_TRUE(loaded->is_available(0));
     EXPECT_GT(loaded->pieces[0].available_at, 0U);
     EXPECT_GT(loaded->pieces[0].last_local_at, 0U);
@@ -198,10 +243,16 @@ TEST_F(UsenetPieceStoreTest, loadsManifestWithoutTimestamps)
 
     auto loaded = store.load(metainfo.info_hash_string());
     ASSERT_TRUE(loaded);
+    EXPECT_EQ(1U, loaded->version);
     ASSERT_EQ(1U, loaded->piece_count());
     EXPECT_TRUE(loaded->is_available(0));
     EXPECT_EQ(0U, loaded->pieces[0].available_at);
     EXPECT_EQ(0U, loaded->pieces[0].last_local_at);
+
+    ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 0U, tr_usenet_piece_state::Available));
+    loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(TrUsenetPieceManifestVersion, loaded->version);
 }
 
 TEST_F(UsenetPieceStoreTest, setPieceStateUpdatesManifest)
@@ -233,14 +284,100 @@ TEST_F(UsenetPieceStoreTest, setMessageIdStateUpdatesDuplicatePieces)
     manifest->pieces[2].message_id = "other@nashawk.local";
     ASSERT_TRUE(store.save(*manifest));
 
-    EXPECT_FALSE(store.set_message_id_state(metainfo.info_hash_string(), message_id, tr_usenet_piece_state::Available));
+    EXPECT_FALSE(store.set_message_id_state(
+        metainfo.info_hash_string(),
+        message_id,
+        tr_usenet_piece_state::Available,
+        3U,
+        2U * 1024U * 1024U));
 
     auto loaded = store.load(metainfo.info_hash_string());
     ASSERT_TRUE(loaded);
     EXPECT_EQ(tr_usenet_piece_state::Available, loaded->pieces[0].state);
     EXPECT_EQ(tr_usenet_piece_state::Available, loaded->pieces[1].state);
+    EXPECT_EQ(3U, loaded->pieces[0].article_count);
+    EXPECT_EQ(3U, loaded->pieces[1].article_count);
+    EXPECT_EQ(2U * 1024U * 1024U, loaded->pieces[0].article_payload_size);
+    EXPECT_EQ(2U * 1024U * 1024U, loaded->pieces[1].article_payload_size);
     EXPECT_EQ(tr_usenet_piece_state::Unknown, loaded->pieces[2].state);
     EXPECT_TRUE(loaded->has_message_id_state(message_id, tr_usenet_piece_state::Available));
+
+    EXPECT_FALSE(store.set_message_id_state(metainfo.info_hash_string(), message_id, tr_usenet_piece_state::Failed));
+    loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(0U, loaded->pieces[0].article_count);
+    EXPECT_EQ(0U, loaded->pieces[1].article_count);
+    EXPECT_EQ(0U, loaded->pieces[0].article_payload_size);
+    EXPECT_EQ(0U, loaded->pieces[1].article_payload_size);
+}
+
+TEST_F(UsenetPieceStoreTest, manifestVersionTwoNormalizesUnknownChainMetadata)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+
+    auto file = std::ofstream{ store.manifest_path(metainfo.info_hash_string()) };
+    file << fmt::format(
+        R"({{"version":2,"hash_string":"{}","piece_count":1,"piece_size":{},"max_article_size":{},"pieces":[{{"status":"available","message_id":"{}@nashawk.local","article_count":0,"article_payload_size":123}}]}})",
+        metainfo.info_hash_string(),
+        metainfo.piece_size(),
+        metainfo.piece_size(),
+        tr_sha1_to_string(metainfo.piece_hash(0)));
+    file.close();
+
+    auto const loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    ASSERT_EQ(1U, loaded->piece_count());
+    EXPECT_EQ(0U, loaded->pieces[0].article_count);
+    EXPECT_EQ(0U, loaded->pieces[0].article_payload_size);
+}
+
+TEST_F(UsenetPieceStoreTest, rejectsUnsupportedManifestVersionAndArticleCount)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    auto const path = store.manifest_path(metainfo.info_hash_string());
+    auto const message_id = fmt::format("{}@nashawk.local", tr_sha1_to_string(metainfo.piece_hash(0)));
+
+    {
+        auto file = std::ofstream{ path };
+        file << fmt::format(
+            R"({{"version":3,"hash_string":"{}","piece_count":1,"piece_size":{},"pieces":[{{"status":"available","message_id":"{}"}}]}})",
+            metainfo.info_hash_string(),
+            metainfo.piece_size(),
+            message_id);
+    }
+    EXPECT_FALSE(store.load(metainfo.info_hash_string()));
+
+    {
+        auto file = std::ofstream{ path };
+        file << fmt::format(
+            R"({{"version":2,"hash_string":"{}","piece_count":1,"piece_size":{},"pieces":[{{"status":"available","message_id":"{}","article_count":1025}}]}})",
+            metainfo.info_hash_string(),
+            metainfo.piece_size(),
+            message_id);
+    }
+    EXPECT_FALSE(store.load(metainfo.info_hash_string()));
+
+    {
+        auto file = std::ofstream{ path };
+        file << fmt::format(
+            R"({{"version":2,"hash_string":"{}","piece_count":1,"piece_size":{},"pieces":[{{"status":"available","message_id":"{}","article_count":-1}}]}})",
+            metainfo.info_hash_string(),
+            metainfo.piece_size(),
+            message_id);
+    }
+    EXPECT_FALSE(store.load(metainfo.info_hash_string()));
+
+    {
+        auto file = std::ofstream{ path };
+        file << fmt::format(
+            R"({{"version":2,"hash_string":"{}","piece_count":1,"piece_size":{},"pieces":[{{"status":"available","message_id":"{}","article_count":1,"article_payload_size":-1}}]}})",
+            metainfo.info_hash_string(),
+            metainfo.piece_size(),
+            message_id);
+    }
+    EXPECT_FALSE(store.load(metainfo.info_hash_string()));
 }
 
 TEST_F(UsenetPieceStoreTest, resetInterruptedUploads)
@@ -249,7 +386,8 @@ TEST_F(UsenetPieceStoreTest, resetInterruptedUploads)
     auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
     ASSERT_FALSE(store.ensure_torrent(metainfo));
 
-    ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 0, tr_usenet_piece_state::Uploading));
+    ASSERT_FALSE(
+        store.set_piece_state(metainfo.info_hash_string(), 0, tr_usenet_piece_state::Uploading, 2U, 2U * 1024U * 1024U));
     ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 1, tr_usenet_piece_state::Available));
     ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 2, tr_usenet_piece_state::Failed));
     ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 3, tr_usenet_piece_state::Uploading));
@@ -261,6 +399,8 @@ TEST_F(UsenetPieceStoreTest, resetInterruptedUploads)
     auto loaded = store.load(metainfo.info_hash_string());
     ASSERT_TRUE(loaded);
     EXPECT_EQ(tr_usenet_piece_state::Unknown, loaded->pieces[0].state);
+    EXPECT_EQ(0U, loaded->pieces[0].article_count);
+    EXPECT_EQ(0U, loaded->pieces[0].article_payload_size);
     EXPECT_EQ(tr_usenet_piece_state::Available, loaded->pieces[1].state);
     EXPECT_EQ(tr_usenet_piece_state::Failed, loaded->pieces[2].state);
     EXPECT_EQ(tr_usenet_piece_state::Unknown, loaded->pieces[3].state);
@@ -304,14 +444,34 @@ TEST_F(UsenetPieceStoreTest, setPieceStateRejectsOutOfRangePiece)
     EXPECT_NE(std::string::npos, error->find("out of range"));
 }
 
-TEST_F(UsenetPieceStoreTest, rejectsOversizedPiece)
+TEST_F(UsenetPieceStoreTest, acceptsPieceSpanningMultipleArticles)
 {
     auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
     auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() - 1U };
 
-    auto error = store.ensure_torrent(metainfo);
+    EXPECT_FALSE(store.ensure_torrent(metainfo));
+    EXPECT_TRUE(store.load(metainfo.info_hash_string()));
+}
+
+TEST_F(UsenetPieceStoreTest, rejectsPieceExceedingArticleCountSafetyBound)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), 1U };
+
+    auto const error = store.ensure_torrent(metainfo);
     ASSERT_TRUE(error);
-    EXPECT_NE(std::string::npos, error->find("exceeds Usenet article size limit"));
+    EXPECT_NE(std::string::npos, error->find("1024 article safety limit"));
+    EXPECT_FALSE(store.load(metainfo.info_hash_string()));
+}
+
+TEST_F(UsenetPieceStoreTest, rejectsZeroArticlePayloadLimit)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), 0U };
+
+    auto const error = store.ensure_torrent(metainfo);
+    ASSERT_TRUE(error);
+    EXPECT_NE(std::string::npos, error->find("must be positive"));
     EXPECT_FALSE(store.load(metainfo.info_hash_string()));
 }
 

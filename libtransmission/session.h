@@ -1078,6 +1078,8 @@ public:
         tr_piece_index_t piece,
         std::string message_id,
         std::string temp_file,
+        size_t article_count,
+        uint64_t article_payload_size,
         bool success,
         std::string error);
 
@@ -1290,7 +1292,9 @@ private:
         tr_piece_index_t piece = 0U;
         std::string message_id;
         std::string temp_file;
-        uint64_t article_size = 0U;
+        uint64_t piece_size = 0U;
+        uint64_t article_payload_size = 0U;
+        size_t article_count = 0U;
     };
 
     void startUsenetUploadWorker();
@@ -1311,12 +1315,14 @@ private:
         tr_piece_index_t piece = 0U;
         std::string message_id;
         uint64_t expected_size = 0U;
+        tr_sha1_digest_t expected_hash = {};
     };
 
     struct UsenetDownloadResult
     {
         UsenetDownloadTask task;
         std::vector<uint8_t> data;
+        size_t article_count = 0U;
         std::optional<std::string> error;
     };
 
@@ -1339,6 +1345,8 @@ private:
     {
         tr_piece_index_t piece = 0U;
         std::string message_id;
+        uint64_t expected_size = 0U;
+        tr_sha1_digest_t expected_hash = {};
     };
 
     struct UsenetDiscoveryTask

@@ -14,4 +14,6 @@ Archived documents:
 - [Usenet Nyuu Batch Upload Plan](Usenet-Nyuu-Batch-Upload-Plan.md)
 - [Usenet Web UI Plan](Usenet-Web-UI-Plan.md)
 - [Usenet Piece Discovery Plan](Usenet-Piece-Discovery-Plan.md)
+- [Usenet Multipart Piece Design](Usenet-Multipart-Piece-Design.md)
+- [Usenet Multipart Piece Implementation Plan](Usenet-Multipart-Piece-Implementation-Plan.md)
 - [Usenet Backend Test Status - 2026-07-11](Usenet-Backend-Test-Status-2026-07-11.md)

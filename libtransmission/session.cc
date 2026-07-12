@@ -347,6 +347,7 @@ struct TempDirGuard
                 .config_dir = config_dir,
                 .message_id = message_id,
                 .expected_size = expected_size,
+                .expected_hash = {},
             },
             remote);
         error)
@@ -357,6 +358,70 @@ struct TempDirGuard
     if (local != remote)
     {
         return "Usenet readback did not match staged upload file";
+    }
+
+    return {};
+}
+
+[[nodiscard]] std::optional<std::string> stage_usenet_piece_parts(
+    std::string_view const source,
+    std::string_view const batch_dir,
+    std::string_view const base_message_id,
+    uint64_t const piece_size,
+    uint64_t const article_payload_size,
+    std::vector<std::string>& setme)
+{
+    auto const plan = tr_usenet_piece_part_plan(piece_size, article_payload_size);
+    if (!plan)
+    {
+        return "Could not plan multipart Usenet upload";
+    }
+
+    auto input = std::ifstream{ std::string{ source }, std::ios::binary };
+    if (!input)
+    {
+        return "Could not open staged Usenet piece";
+    }
+
+    auto const fail = [&setme](std::string error)
+    {
+        for (auto const& path : setme)
+        {
+            tr_sys_path_remove(path);
+        }
+        setme.clear();
+        return std::optional<std::string>{ std::move(error) };
+    };
+
+    for (auto const& part : *plan)
+    {
+        auto const message_id = tr_usenet_piece_article_message_id(base_message_id, part.index);
+        if (!message_id)
+        {
+            return fail("Could not derive multipart Usenet Message-ID");
+        }
+
+        auto const path = std::string{ tr_pathbuf{ batch_dir, '/', message_id_local_part(*message_id) }.sv() };
+        auto output = std::ofstream{ path, std::ios::binary | std::ios::trunc };
+        if (!output)
+        {
+            return fail("Could not create multipart Usenet staging file");
+        }
+
+        auto remaining = part.size;
+        auto buffer = std::array<char, 64U * 1024U>{};
+        while (remaining != 0U)
+        {
+            auto const count = static_cast<std::streamsize>(std::min<uint64_t>(remaining, std::size(buffer)));
+            if (!input.read(std::data(buffer), count) || !output.write(std::data(buffer), count))
+            {
+                output.close();
+                tr_sys_path_remove(path);
+                return fail("Could not split multipart Usenet staging file");
+            }
+            remaining -= static_cast<uint64_t>(count);
+        }
+        setme.push_back(path);
     }
 
     return {};
@@ -2579,7 +2644,13 @@ void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
         samples.reserve(std::size(sample_pieces));
         for (auto const piece : sample_pieces)
         {
-            samples.push_back({ .piece = piece, .message_id = manifest->pieces[piece].message_id });
+            samples.push_back(
+                {
+                    .piece = piece,
+                    .message_id = manifest->pieces[piece].message_id,
+                    .expected_size = tor.piece_size(piece),
+                    .expected_hash = tor.piece_hash(piece),
+                });
         }
 
         manifest->discovery.state = tr_usenet_discovery_state::Checking;
@@ -3050,6 +3121,7 @@ void tr_session::fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t const 
             .piece = piece,
             .message_id = entry->message_id,
             .expected_size = tor.piece_size(piece),
+            .expected_hash = tor.piece_hash(piece),
         });
 
     tr_logAddTraceTor(&tor, fmt::format("Queued piece {} for Usenet download", piece));
@@ -3137,27 +3209,24 @@ void tr_session::usenetDiscoveryWorker()
                 break;
             }
 
-            auto exists = tr_usenet_article_exists(
+            auto chain = tr_usenet_download_result{};
+            auto error = tr_usenet_download_piece_chain(
                 {
                     .config_dir = config_dir_,
                     .message_id = sample.message_id,
-                });
+                    .expected_size = sample.expected_size,
+                    .expected_hash = sample.expected_hash,
+                },
+                chain);
             releaseUsenetIoSlot();
 
-            if (auto const* state = std::get_if<tr_usenet_article_exists_result>(&exists); state != nullptr)
+            if (!error)
             {
-                if (*state == tr_usenet_article_exists_result::Missing)
-                {
-                    result.state = tr_usenet_discovery_state::Missing;
-                    result.error = fmt::format("Sample piece {} was missing from Usenet", sample.piece);
-                    break;
-                }
-
                 continue;
             }
 
-            result.state = tr_usenet_discovery_state::Error;
-            result.error = std::get<std::string>(exists);
+            result.state = tr_usenet_discovery_state::Missing;
+            result.error = fmt::format("Sample piece {} failed Usenet chain validation: {}", sample.piece, *error);
             break;
         }
 
@@ -3309,14 +3378,18 @@ void tr_session::usenetDownloadWorker()
             return;
         }
 
-        auto result = UsenetDownloadResult{ .task = std::move(task), .data = {}, .error = {} };
-        result.error = tr_usenet_download_piece(
+        auto result = UsenetDownloadResult{ .task = std::move(task), .data = {}, .article_count = 0U, .error = {} };
+        auto chain = tr_usenet_download_result{};
+        result.error = tr_usenet_download_piece_chain(
             {
                 .config_dir = config_dir_,
                 .message_id = result.task.message_id,
                 .expected_size = result.task.expected_size,
+                .expected_hash = result.task.expected_hash,
             },
-            result.data);
+            chain);
+        result.data = std::move(chain.data);
+        result.article_count = chain.article_count;
         releaseUsenetIoSlot();
 
         {
@@ -3347,12 +3420,22 @@ void tr_session::onUsenetPieceDownloaded(UsenetDownloadResult result)
     if (result.error)
     {
         tr_logAddWarnTor(tor, fmt::format("Could not download piece {} from Usenet: {}", result.task.piece, *result.error));
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        (void)usenet_piece_store_->set_message_id_state(
+            result.task.info_hash_string,
+            result.task.message_id,
+            tr_usenet_piece_state::Failed);
         return;
     }
 
     if (std::size(result.data) != tor->piece_size(result.task.piece))
     {
         tr_logAddWarnTor(tor, fmt::format("Usenet piece {} had an unexpected size", result.task.piece));
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        (void)usenet_piece_store_->set_message_id_state(
+            result.task.info_hash_string,
+            result.task.message_id,
+            tr_usenet_piece_state::Failed);
         return;
     }
 
@@ -3373,16 +3456,21 @@ void tr_session::onUsenetPieceDownloaded(UsenetDownloadResult result)
     {
         tr_logAddWarnTor(tor, fmt::format("Usenet piece {} failed its checksum test", result.task.piece));
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-        (void)usenet_piece_store_->set_piece_state(
+        (void)usenet_piece_store_->set_message_id_state(
             result.task.info_hash_string,
-            result.task.piece,
+            result.task.message_id,
             tr_usenet_piece_state::Failed);
         return;
     }
 
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-        (void)usenet_piece_store_->note_piece_local_activity(result.task.info_hash_string, result.task.piece);
+        (void)usenet_piece_store_->set_message_id_state(
+            result.task.info_hash_string,
+            result.task.message_id,
+            tr_usenet_piece_state::Available,
+            result.article_count,
+            0U);
     }
 
     tr_logAddTraceTor(tor, fmt::format("Usenet piece {} restored to local data", result.task.piece));
@@ -3473,8 +3561,11 @@ void tr_session::usenetUploadWorker()
 
             batch.push_back(std::move(usenet_upload_queue_.front()));
             usenet_upload_queue_.pop_front();
-            while (std::size(batch) < MaxNyuuBatchFiles && !std::empty(usenet_upload_queue_))
+            auto article_count = batch.front().article_count;
+            while (!std::empty(usenet_upload_queue_) &&
+                   article_count + usenet_upload_queue_.front().article_count <= MaxNyuuBatchFiles)
             {
+                article_count += usenet_upload_queue_.front().article_count;
                 batch.push_back(std::move(usenet_upload_queue_.front()));
                 usenet_upload_queue_.pop_front();
             }
@@ -3487,6 +3578,8 @@ void tr_session::usenetUploadWorker()
                 task.piece,
                 std::move(task.message_id),
                 std::move(task.temp_file),
+                task.article_count,
+                task.article_payload_size,
                 success,
                 std::move(error));
         };
@@ -3502,31 +3595,31 @@ void tr_session::usenetUploadWorker()
         }
 
         auto batch_guard = TempDirGuard{ batch_dir };
-        auto staged_paths = std::vector<std::string>{};
-        staged_paths.reserve(std::size(batch));
-        auto article_size = uint64_t{};
+        auto staged_paths_by_task = std::vector<std::vector<std::string>>(std::size(batch));
+        auto article_payload_size = uint64_t{};
         auto staging_error = std::optional<std::string>{};
 
-        for (auto const& task : batch)
+        for (size_t i = 0U; i < std::size(batch); ++i)
         {
-            auto const local_part = message_id_local_part(task.message_id);
-            if (std::empty(local_part))
+            auto const& task = batch[i];
+            if (auto error = stage_usenet_piece_parts(
+                    task.temp_file,
+                    batch_dir,
+                    task.message_id,
+                    task.piece_size,
+                    task.article_payload_size,
+                    staged_paths_by_task[i]);
+                error)
             {
-                staging_error = fmt::format("Could not stage Usenet batch file for invalid message id '{}'", task.message_id);
+                staging_error = std::move(error);
                 break;
             }
 
-            auto const staged_path = std::string{ tr_pathbuf{ batch_dir, '/', local_part, ".piece"sv }.sv() };
-            auto copy_error = tr_error{};
-            if (!tr_sys_path_copy(task.temp_file, staged_path, &copy_error))
-            {
-                staging_error = fmt::format("Could not stage Usenet batch file: {}", copy_error.message());
-                break;
-            }
-
-            batch_guard.files.push_back(staged_path);
-            staged_paths.push_back(staged_path);
-            article_size = std::max(article_size, task.article_size);
+            batch_guard.files.insert(
+                std::end(batch_guard.files),
+                std::begin(staged_paths_by_task[i]),
+                std::end(staged_paths_by_task[i]));
+            article_payload_size = std::max(article_payload_size, task.article_payload_size);
         }
 
         if (staging_error)
@@ -3540,8 +3633,13 @@ void tr_session::usenetUploadWorker()
 
         auto const io_limit = usenetIoLimit();
         auto const check_connection_budget = io_limit > NyuuBatchCheckConnections ? NyuuBatchCheckConnections : 0U;
+        auto staged_paths = std::vector<std::string>{};
+        for (auto const& paths : staged_paths_by_task)
+        {
+            staged_paths.insert(std::end(staged_paths), std::begin(paths), std::end(paths));
+        }
         auto const connection_count = std::clamp(
-            std::min({ std::size(batch), MaxNyuuBatchConnections, io_limit - check_connection_budget }),
+            std::min({ std::size(staged_paths), MaxNyuuBatchConnections, io_limit - check_connection_budget }),
             size_t{ 1U },
             io_limit);
         auto const reserved_io_slots = std::min(io_limit, connection_count + check_connection_budget);
@@ -3558,7 +3656,7 @@ void tr_session::usenetUploadWorker()
             {
                 .config_dir = config_dir_,
                 .file_paths = std::move(staged_paths),
-                .article_size = article_size,
+                .article_size = article_payload_size,
                 .connections = connection_count,
             });
         releaseUsenetIoSlots(reserved_io_slots);
@@ -3581,8 +3679,9 @@ void tr_session::usenetUploadWorker()
         auto single_retry_success_count = size_t{};
         auto failed_count = size_t{};
 
-        for (auto& task : batch)
+        for (size_t i = 0U; i < std::size(batch); ++i)
         {
+            auto& task = batch[i];
             auto success = false;
             auto error = *upload_error;
 
@@ -3592,7 +3691,7 @@ void tr_session::usenetUploadWorker()
                         config_dir_,
                         task.message_id,
                         task.temp_file,
-                        task.article_size);
+                        task.piece_size);
                     readback_error)
                 {
                     error += fmt::format("; batch readback check failed: {}", *readback_error);
@@ -3615,14 +3714,12 @@ void tr_session::usenetUploadWorker()
             auto const single_retry_slots = std::min(usenetIoLimit(), size_t{ 2U });
             if (acquireUsenetIoSlots(single_retry_slots))
             {
-                single_upload_error = tr_usenet_upload_file(
+                single_upload_error = tr_usenet_upload_files(
                     {
                         .config_dir = config_dir_,
-                        .file_path = task.temp_file,
-                        .message_id = task.message_id,
-                        .subject = fmt::format("Nashawk piece {}", task.message_id),
-                        .yenc_name = fmt::format("{}.piece", message_id_local_part(task.message_id)),
-                        .article_size = task.article_size,
+                        .file_paths = staged_paths_by_task[i],
+                        .article_size = task.article_payload_size,
+                        .connections = 1U,
                     });
                 releaseUsenetIoSlots(single_retry_slots);
 
@@ -3641,7 +3738,7 @@ void tr_session::usenetUploadWorker()
                         config_dir_,
                         task.message_id,
                         task.temp_file,
-                        task.article_size);
+                        task.piece_size);
                     retry_readback_error)
                 {
                     error += fmt::format("; retry readback check failed: {}", *retry_readback_error);
@@ -3759,7 +3856,10 @@ void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t 
             .piece = piece,
             .message_id = entry->message_id,
             .temp_file = std::move(temp_file),
-            .article_size = tor.piece_size(piece),
+            .piece_size = tor.piece_size(piece),
+            .article_payload_size = usenet_piece_store_->max_article_size(),
+            .article_count = tr_usenet_piece_article_count(tor.piece_size(piece), usenet_piece_store_->max_article_size())
+                                 .value_or(0U),
         });
 
     tr_logAddTraceTor(&tor, fmt::format("Queued piece {} for Usenet upload", piece));
@@ -3770,6 +3870,8 @@ void tr_session::onUsenetPieceUploadFinished(
     tr_piece_index_t const piece,
     std::string message_id,
     std::string temp_file,
+    size_t const article_count,
+    uint64_t const article_payload_size,
     bool const success,
     std::string error)
 {
@@ -3784,7 +3886,12 @@ void tr_session::onUsenetPieceUploadFinished(
     auto store_error = std::optional<std::string>{};
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-        store_error = usenet_piece_store_->set_message_id_state(info_hash_string, message_id, state);
+        store_error = usenet_piece_store_->set_message_id_state(
+            info_hash_string,
+            message_id,
+            state,
+            success ? std::optional<size_t>{ article_count } : std::nullopt,
+            success ? std::optional<uint64_t>{ article_payload_size } : std::nullopt);
     }
 
     if (store_error)

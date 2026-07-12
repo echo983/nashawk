@@ -59,18 +59,22 @@ Current limits:
 
 ## Storage Model
 
-Nashawk uses one BitTorrent piece per Usenet article.
-
-The backend does not split a BitTorrent piece across multiple Usenet articles.
-If a torrent's piece size is larger than the configured article-size check, that
-torrent is not eligible for this mode.
+Nashawk stores a BitTorrent piece in one or more Usenet articles. Pieces at or
+below the configured payload limit use one article. Larger pieces are split into
+deterministic contiguous parts and remain one logical BitTorrent piece.
 
 Each piece is addressed by a deterministic `Message-ID`. In the current
 implementation, the message-id local part is the piece SHA1 hash:
 
 ```text
 <piece-sha1@nashawk.local>
+<piece-sha1.1@nashawk.local>
+<piece-sha1.2@nashawk.local>
 ```
+
+The base article is unchanged for compatibility. Continuations are numbered
+from `.1`; a piece may use at most 1024 articles. The final continuation may be
+shorter than the configured payload limit.
 
 The Usenet article body is the piece bytes encoded as yEnc. No NZB index is
 required for normal operation.
@@ -239,12 +243,13 @@ When a local piece completes and passes the torrent hash check:
 1. Nashawk checks the torrent's Usenet manifest.
 2. Pieces already marked `available` or `uploading` are skipped.
 3. The full piece is staged into a temporary local file.
-4. Upload workers batch staged pieces and copy them into a private batch
-   directory using deterministic `<piece-hash>.piece` filenames.
+4. Upload workers split each staged piece into deterministic `<piece-hash>`,
+   `<piece-hash>.1`, and subsequent files in a private batch directory.
 5. A temporary `nyuu` config is written with restrictive permissions.
-6. `nyuu` posts one yEnc article per staged piece using token-expanded
+6. `nyuu` posts one yEnc article per staged part using token-expanded
    deterministic message-ids.
-7. On success, the manifest entry becomes `available`.
+7. Only complete logical-piece success makes the manifest entry `available`;
+   the manifest also records the article count and uploader payload size.
 8. On batch failure, Nashawk retries each piece through the conservative
    single-file Nyuu path.
 9. On retry failure, Nashawk attempts per-piece readback before marking failed.
@@ -260,8 +265,10 @@ When a peer requests a piece:
 2. If it does not exist locally but the manifest says it is `available`,
    Nashawk queues an asynchronous Usenet fetch.
 3. The current peer request can be rejected while the fetch is in flight.
-4. The download worker fetches `BODY <message-id>` from Usenet.
-5. The worker decodes yEnc and verifies the torrent piece hash.
+4. The download worker fetches and decodes the base article, then numbered
+   continuations until the exact metainfo piece size is reached.
+5. Overflow, missing or empty continuations, more than 1024 articles, and piece
+   hash mismatch reject the entire chain.
 6. If verification passes, the piece is written into the local torrent data
    path and marked locally complete.
 7. Later peer retries are served from local disk.
@@ -276,12 +283,13 @@ uploaded for the same torrent.
 After magnet metadata or torrent metainfo is available, Nashawk creates or
 loads the torrent's Usenet manifest. If the manifest has no meaningful existing
 piece state and discovery is enabled, Nashawk selects a deterministic bounded
-sample of piece indexes and sends NNTP `STAT <message-id>` checks for the
-corresponding deterministic piece Message-IDs.
+sample of piece indexes and validates each sampled complete article chain with
+`BODY` requests, exact metainfo size, and the BitTorrent piece hash. Discovery
+does not assume the uploader used the current node's payload limit.
 
 Outcomes:
 
-- if every sampled article exists, all pieces in the manifest are marked
+- if every sampled chain validates, all pieces in the manifest are marked
   `available`, and the torrent becomes Usenet-serviceable without waiting for a
   normal full BitTorrent download;
 - if any sampled article is missing, discovery records `missing` and the torrent
@@ -371,8 +379,8 @@ pass after the configured minimum age.
 
 - Use this mode only with content you are allowed to store and distribute.
 - Use a Usenet provider account that explicitly permits posting.
-- Set `usenet_check_article_size` to the maximum BitTorrent piece size you
-  intend this node to support.
+- Set `usenet_check_article_size` to the maximum raw payload for each Usenet
+  article. Larger BitTorrent pieces are split automatically.
 - Use `--usenet-upload-concurrency` conservatively and keep it at or below the
   provider account's simultaneous NNTP connection limit.
 - Keep `usenet_eviction_enabled` off until the node has uploaded and sampled
@@ -466,8 +474,9 @@ group accepts posts.
 
 Article-size validation failure
 
-Lower `usenet_check_article_size` or reject torrents whose piece size is too
-large for the provider.
+Lower `usenet_check_article_size` to a raw payload the provider accepts. This
+increases the number of articles per large piece; torrents requiring more than
+1024 articles per piece remain ineligible.
 
 Peer sees availability but first request is rejected
 
@@ -476,6 +485,8 @@ fetch; once the piece is restored, peer retries can be served.
 
 ## Related Documents
 
+- [Archived Usenet Multipart Piece Design](./archive/Usenet-Multipart-Piece-Design.md)
+- [Archived Usenet Multipart Piece Implementation Plan](./archive/Usenet-Multipart-Piece-Implementation-Plan.md)
 - [Archived Usenet Piece Backend Design](./archive/Usenet-Piece-Backend.md)
 - [Archived Usenet Piece Backend Implementation Plan](./archive/Usenet-Piece-Backend-Plan.md)
 - [Archived Usenet Local Piece Eviction Plan](./archive/Usenet-Local-Piece-Eviction-Plan.md)
