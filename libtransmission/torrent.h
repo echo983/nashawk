@@ -648,12 +648,22 @@ struct tr_torrent
 
     [[nodiscard]] tr_stat stats() const;
 
-    [[nodiscard]] constexpr auto queue_direction() const noexcept
+    [[nodiscard]] bool is_usenet_servable_complete() const
     {
-        return is_done() ? tr_direction::Up : tr_direction::Down;
+        return !is_done() && session != nullptr && session->isUsenetServableComplete(*this);
     }
 
-    [[nodiscard]] constexpr auto is_queued(tr_direction const dir) const noexcept
+    [[nodiscard]] bool is_serving_complete() const
+    {
+        return is_done() || is_usenet_servable_complete();
+    }
+
+    [[nodiscard]] auto queue_direction() const
+    {
+        return is_serving_complete() ? tr_direction::Up : tr_direction::Down;
+    }
+
+    [[nodiscard]] auto is_queued(tr_direction const dir) const
     {
         return is_queued_ && dir == queue_direction();
     }
@@ -717,7 +727,7 @@ struct tr_torrent
         set_dirty();
     }
 
-    [[nodiscard]] constexpr auto activity() const noexcept
+    [[nodiscard]] auto activity() const
     {
         if (verify_state_ == VerifyState::Active)
         {
@@ -731,7 +741,7 @@ struct tr_torrent
 
         if (is_running())
         {
-            return is_done() ? TR_STATUS_SEED : TR_STATUS_DOWNLOAD;
+            return is_serving_complete() ? TR_STATUS_SEED : TR_STATUS_DOWNLOAD;
         }
 
         if (is_queued(tr_direction::Up) && session->queueEnabled(tr_direction::Up))
@@ -870,7 +880,7 @@ struct tr_torrent
         return idle_limit_minutes_;
     }
 
-    [[nodiscard]] constexpr std::optional<time_t> idle_seconds(time_t now) const noexcept
+    [[nodiscard]] std::optional<time_t> idle_seconds(time_t now) const
     {
         auto const activity = this->activity();
 

@@ -530,7 +530,7 @@ public:
         }
 
         auto const active = client_is_interested() && !client_is_choked();
-        TR_ASSERT(!active || !tor_.is_done());
+        TR_ASSERT(!active || !tor_.is_serving_complete());
         return active;
     }
 
@@ -1237,7 +1237,7 @@ void tr_peerMsgsImpl::send_ltep_handshake()
     // the extension handshake 'upload_only'. Setting the value of this
     // key to 1 indicates that this peer is not interested in downloading
     // anything.
-    val.try_emplace(TR_KEY_upload_only, tor_.is_done());
+    val.try_emplace(TR_KEY_upload_only, tor_.is_serving_complete());
 
     if (allow_metadata_xfer || allow_pex)
     {
@@ -2225,7 +2225,7 @@ bool tr_peerMsgsImpl::is_valid_request(peer_request const& req) const
 
 size_t tr_peerMsgsImpl::max_available_reqs() const
 {
-    if (tor_.is_done() || !tor_.has_metainfo() || client_is_choked() || !client_is_interested())
+    if (tor_.is_serving_complete() || !tor_.has_metainfo() || client_is_choked() || !client_is_interested())
     {
         return 0;
     }

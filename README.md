@@ -22,7 +22,9 @@ evicted from local torrent files to reduce disk usage on storage-constrained
 hosts. The current implementation also exposes Usenet serving state in the Web
 UI and can sample deterministic piece Message-IDs after magnet metadata is
 available, allowing a node to discover torrents that another Nashawk node has
-already populated in Usenet.
+already populated in Usenet. Fully servable Usenet-backed torrents use
+seed-like activity and peer behavior without rewriting normal local completion
+or tracker completion state.
 
 Start with [Nashawk Usenet piece backend](docs/Usenet-Piece-Backend-README.md)
 for setup, safety notes, daemon flags, and validation steps.

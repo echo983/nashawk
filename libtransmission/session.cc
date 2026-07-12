@@ -2658,6 +2658,40 @@ bool tr_session::hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t const pi
     return entry && entry->state == tr_usenet_piece_state::Available;
 }
 
+bool tr_session::isUsenetServableComplete(tr_torrent const& tor)
+{
+    if (usenet_piece_store_ == nullptr || !settings_.usenet_enabled || !tor.has_metainfo() || tor.piece_count() == 0U)
+    {
+        return false;
+    }
+
+    auto manifest = std::optional<tr_usenet_piece_manifest>{};
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        if (!usenet_piece_store_->is_piece_size_eligible(tor.piece_size()))
+        {
+            return false;
+        }
+
+        manifest = usenet_piece_store_->load(tor.info_hash_string());
+    }
+
+    if (!manifest || manifest->piece_count() < tor.piece_count())
+    {
+        return false;
+    }
+
+    for (tr_piece_index_t piece = 0; piece < tor.piece_count(); ++piece)
+    {
+        if (!tor.has_piece(piece) && !manifest->is_available(piece))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 size_t tr_session::usenetIoLimit() const
 {
     auto constexpr MaxUsenetIoConcurrency = size_t{ 64U };
