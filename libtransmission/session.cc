@@ -401,7 +401,7 @@ struct TempDirGuard
             return fail("Could not derive multipart Usenet Message-ID");
         }
 
-        auto const path = std::string{ tr_pathbuf{ batch_dir, '/', message_id_local_part(*message_id), ".piece"sv }.sv() };
+        auto const path = std::string{ tr_pathbuf{ batch_dir, '/', message_id_local_part(*message_id) }.sv() };
         auto output = std::ofstream{ path, std::ios::binary | std::ios::trunc };
         if (!output)
         {
