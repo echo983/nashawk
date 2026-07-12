@@ -800,7 +800,7 @@ namespace make_torrent_field_helpers
 [[nodiscard]] tr_variant make_usenet_piece_summary_map(tr_session& session, tr_torrent const& tor)
 {
     auto const summary = session.usenetPieceSummary(tor);
-    auto map = tr_variant::Map{ 9U };
+    auto map = tr_variant::Map{ 10U };
 
     map.try_emplace(TR_KEY_eligible, summary.eligible);
     map.try_emplace(TR_KEY_manifest_present, summary.manifest_present);
@@ -811,6 +811,24 @@ namespace make_torrent_field_helpers
     map.try_emplace(TR_KEY_available, summary.available);
     map.try_emplace(TR_KEY_failed, summary.failed);
     map.try_emplace(TR_KEY_servable, summary.servable);
+
+    auto discovery = tr_variant::Map{ 5U };
+    discovery.try_emplace(TR_KEY_status, tr_variant::unmanaged_string(tr_usenet_discovery_state_name(summary.discovery.state)));
+    discovery.try_emplace(tr_quark_new("checked_at"sv), static_cast<int64_t>(summary.discovery.checked_at));
+    discovery.try_emplace(tr_quark_new("sample_size"sv), static_cast<int64_t>(summary.discovery.sample_size));
+    if (!std::empty(summary.discovery.error))
+    {
+        discovery.try_emplace(tr_quark_new("error"sv), summary.discovery.error);
+    }
+
+    auto sampled_pieces = tr_variant::Vector{};
+    sampled_pieces.reserve(std::size(summary.discovery.sampled_pieces));
+    for (auto const piece : summary.discovery.sampled_pieces)
+    {
+        sampled_pieces.emplace_back(static_cast<int64_t>(piece));
+    }
+    discovery.try_emplace(tr_quark_new("sampled_pieces"sv), std::move(sampled_pieces));
+    map.try_emplace(tr_quark_new("discovery"sv), std::move(discovery));
 
     return tr_variant{ std::move(map) };
 }
@@ -2025,9 +2043,11 @@ void add_strings_from_var(std::set<std::string_view>& strings, tr_variant const&
 [[nodiscard]] tr_variant make_usenet_runtime_map(tr_session& session)
 {
     auto const snapshot = session.usenetRuntimeSnapshot();
-    auto map = tr_variant::Map{ 10U };
+    auto map = tr_variant::Map{ 12U };
 
     map.try_emplace(TR_KEY_usenet_enabled, snapshot.enabled);
+    map.try_emplace(TR_KEY_usenet_discovery_enabled, snapshot.discovery_enabled);
+    map.try_emplace(TR_KEY_usenet_discovery_sample_size, snapshot.discovery_sample_size);
     map.try_emplace(TR_KEY_usenet_io_limit, snapshot.io_limit);
     map.try_emplace(TR_KEY_usenet_io_active, snapshot.io_active);
     map.try_emplace(TR_KEY_usenet_upload_queue_size, snapshot.upload_queue_size);
@@ -2269,6 +2289,16 @@ using SessionAccessors = std::pair<SessionGetter, SessionSetter>;
     map.try_emplace(
         TR_KEY_usenet_enabled,
         [](tr_session const& src) -> tr_variant { return src.settings().usenet_enabled; },
+        nullptr);
+
+    map.try_emplace(
+        TR_KEY_usenet_discovery_enabled,
+        [](tr_session const& src) -> tr_variant { return src.settings().usenet_discovery_enabled; },
+        nullptr);
+
+    map.try_emplace(
+        TR_KEY_usenet_discovery_sample_size,
+        [](tr_session const& src) -> tr_variant { return src.settings().usenet_discovery_sample_size; },
         nullptr);
 
     map.try_emplace(

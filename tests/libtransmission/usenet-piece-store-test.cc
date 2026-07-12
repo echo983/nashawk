@@ -3,6 +3,7 @@
 // or any future license endorsed by Mnemosyne LLC.
 // License text can be found in the licenses/ folder.
 
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <string_view>
@@ -44,6 +45,17 @@ TEST_F(UsenetPieceStoreTest, stateNamesRoundtrip)
     }
 
     EXPECT_FALSE(tr_usenet_piece_state_from_name("not-a-state"sv));
+
+    for (auto const state : { tr_usenet_discovery_state::NotChecked,
+                              tr_usenet_discovery_state::Checking,
+                              tr_usenet_discovery_state::Available,
+                              tr_usenet_discovery_state::Missing,
+                              tr_usenet_discovery_state::Error })
+    {
+        EXPECT_EQ(state, tr_usenet_discovery_state_from_name(tr_usenet_discovery_state_name(state)));
+    }
+
+    EXPECT_FALSE(tr_usenet_discovery_state_from_name("not-a-discovery-state"sv));
 }
 
 TEST_F(UsenetPieceStoreTest, evictionEligibilityRequiresAvailableLocalOldPiece)
@@ -106,6 +118,51 @@ TEST_F(UsenetPieceStoreTest, savesPieceState)
     EXPECT_TRUE(loaded->is_available(0));
     EXPECT_GT(loaded->pieces[0].available_at, 0U);
     EXPECT_GT(loaded->pieces[0].last_local_at, 0U);
+}
+
+TEST_F(UsenetPieceStoreTest, discoveryMetadataRoundtrips)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+
+    auto manifest = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(manifest);
+    manifest->discovery.state = tr_usenet_discovery_state::Available;
+    manifest->discovery.checked_at = 12345U;
+    manifest->discovery.sample_size = 4U;
+    manifest->discovery.sampled_pieces = { 0U, 1U, 2U, 3U };
+    manifest->discovery.error = "ignored after success";
+    manifest->set_all_piece_states(tr_usenet_piece_state::Available);
+    ASSERT_TRUE(store.save(*manifest));
+
+    auto loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(tr_usenet_discovery_state::Available, loaded->discovery.state);
+    EXPECT_EQ(12345U, loaded->discovery.checked_at);
+    EXPECT_EQ(4U, loaded->discovery.sample_size);
+    EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U, 1U, 2U, 3U }), loaded->discovery.sampled_pieces);
+    EXPECT_EQ("ignored after success"sv, loaded->discovery.error);
+    EXPECT_TRUE(loaded->has_meaningful_state());
+    ASSERT_FALSE(std::empty(loaded->pieces));
+    EXPECT_EQ(tr_usenet_piece_state::Available, loaded->pieces.front().state);
+}
+
+TEST_F(UsenetPieceStoreTest, discoverySamplePiecesAreDeterministicBoundedAndUseful)
+{
+    auto const samples = tr_usenet_discovery_sample_pieces("0123456789012345678901234567890123456789"sv, 100U, 16U);
+    auto const again = tr_usenet_discovery_sample_pieces("0123456789012345678901234567890123456789"sv, 100U, 16U);
+    EXPECT_EQ(samples, again);
+    EXPECT_EQ(16U, std::size(samples));
+    EXPECT_TRUE(std::ranges::is_sorted(samples));
+    EXPECT_EQ(std::end(samples), std::adjacent_find(std::begin(samples), std::end(samples)));
+    EXPECT_NE(std::end(samples), std::ranges::find(samples, 0U));
+    EXPECT_NE(std::end(samples), std::ranges::find(samples, 50U));
+    EXPECT_NE(std::end(samples), std::ranges::find(samples, 99U));
+
+    EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U }), tr_usenet_discovery_sample_pieces("hash"sv, 1U, 16U));
+    EXPECT_TRUE(std::empty(tr_usenet_discovery_sample_pieces("hash"sv, 100U, 0U)));
+    EXPECT_TRUE(std::empty(tr_usenet_discovery_sample_pieces("hash"sv, 0U, 16U)));
 }
 
 TEST_F(UsenetPieceStoreTest, notePieceLocalActivityUpdatesTimestamp)

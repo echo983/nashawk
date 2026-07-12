@@ -10,9 +10,12 @@ download_dir="${NASHAWK_DOWNLOAD_DIR:-$test_root/downloads}"
 incomplete_dir="${NASHAWK_INCOMPLETE_DIR:-$test_root/incomplete}"
 rpc_bind="${NASHAWK_RPC_BIND:-127.0.0.1}"
 rpc_port="${NASHAWK_RPC_PORT:-19091}"
+usenet_check_article_size="${NASHAWK_USENET_CHECK_ARTICLE_SIZE:-3900000}"
 usenet_upload_concurrency="${NASHAWK_USENET_UPLOAD_CONCURRENCY:-40}"
 usenet_eviction_min_age_minutes="${NASHAWK_USENET_EVICTION_MIN_AGE_MINUTES:-1}"
 usenet_cache_size_mib="${NASHAWK_USENET_CACHE_SIZE_MIB:-0}"
+usenet_discovery_enabled="${NASHAWK_USENET_DISCOVERY_ENABLED:-1}"
+usenet_discovery_sample_size="${NASHAWK_USENET_DISCOVERY_SAMPLE_SIZE:-16}"
 log_level="${NASHAWK_LOG_LEVEL:-info}"
 log_file="${NASHAWK_LOG_FILE:-$test_root/daemon.log}"
 node_version="${NASHAWK_NODE_VERSION:-24.18.0}"
@@ -66,7 +69,17 @@ echo "  Config: $config_dir"
 echo "  Downloads: $download_dir"
 echo "  Log: $log_file"
 echo "  nyuu: $(command -v nyuu)"
+echo "  Usenet article size check: $usenet_check_article_size"
+echo "  Usenet discovery: $usenet_discovery_enabled"
 echo "Press Ctrl-C to stop."
+
+discovery_args=()
+if [[ "$usenet_discovery_enabled" == 0 || "$usenet_discovery_enabled" == false ]]; then
+    discovery_args+=(--no-usenet-discovery)
+else
+    discovery_args+=(--usenet-discovery-enabled)
+fi
+discovery_args+=(--usenet-discovery-sample-size "$usenet_discovery_sample_size")
 
 exec "$daemon" -f \
     -g "$config_dir" \
@@ -76,9 +89,11 @@ exec "$daemon" -f \
     -p "$rpc_port" \
     -T \
     --usenet-enabled \
+    --usenet-check-article-size "$usenet_check_article_size" \
     --usenet-upload-concurrency "$usenet_upload_concurrency" \
     --usenet-eviction-enabled \
     --usenet-eviction-min-age-minutes "$usenet_eviction_min_age_minutes" \
     --usenet-cache-size-mib "$usenet_cache_size_mib" \
+    "${discovery_args[@]}" \
     --log-level="$log_level" \
     -e "$log_file"
