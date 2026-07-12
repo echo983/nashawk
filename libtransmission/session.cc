@@ -483,7 +483,7 @@ tr_peer_id_t tr_peerIdInit()
     auto* it = std::data(peer_id);
 
     // starts with -TRXXXX-
-    auto constexpr Prefix = std::string_view{ PEERID_PREFIX };
+    auto const Prefix = std::string_view{ tr_display_peer_id_prefix() };
     auto const* const end = it + std::size(peer_id);
     it = std::copy_n(std::data(Prefix), std::size(Prefix), it);
 
@@ -615,7 +615,9 @@ std::optional<std::string> tr_session::WebMediator::cookieFile() const
 
 std::optional<std::string_view> tr_session::WebMediator::userAgent() const
 {
-    return TR_NAME "/" SHORT_VERSION_STRING;
+    static thread_local auto user_agent = std::string{};
+    user_agent = fmt::format("{:s}/{:s}", tr_display_client_name(), tr_display_short_version_string());
+    return std::string_view{ user_agent };
 }
 
 std::optional<std::string> tr_session::WebMediator::bind_address_V4() const

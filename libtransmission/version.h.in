@@ -3,6 +3,7 @@
 // NOLINTBEGIN
 
 #define PEERID_PREFIX             "${TR_PEER_ID_PREFIX}"
+#define CLIENT_NAME               "${TR_NAME}"
 #define USERAGENT_PREFIX          "${TR_USER_AGENT_PREFIX}"
 #define VCS_REVISION              "${TR_VCS_REVISION}"
 #define VCS_REVISION_NUM          ${TR_VCS_REVISION}
@@ -14,8 +15,24 @@
 #define MINOR_VERSION             ${TR_VERSION_MINOR}
 #define PATCH_VERSION             ${TR_VERSION_PATCH}
 
+#define COMPAT_VERSION_STRING              "4.1.2"
+#define COMPAT_LONG_VERSION_STRING         "4.1.2 (00000000)"
+#define COMPAT_CLIENT_NAME                 "Transmission"
+#define COMPAT_USERAGENT_PREFIX            "4.1.2"
+#define COMPAT_PEERID_PREFIX               "-TR4120-"
+
 #cmakedefine TR_BETA_RELEASE 1
 #cmakedefine TR_NIGHTLY_RELEASE 1
 #cmakedefine TR_STABLE_RELEASE 1
+
+#ifdef __cplusplus
+bool tr_version_compat_enabled() noexcept;
+void tr_set_version_compat_enabled(bool enabled) noexcept;
+char const* tr_display_short_version_string() noexcept;
+char const* tr_display_long_version_string() noexcept;
+char const* tr_display_client_name() noexcept;
+char const* tr_display_user_agent_prefix() noexcept;
+char const* tr_display_peer_id_prefix() noexcept;
+#endif
 
 // NOLINTEND
