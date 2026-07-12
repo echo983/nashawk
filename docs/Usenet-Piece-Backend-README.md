@@ -141,14 +141,14 @@ transmission-daemon --usenet-enabled
 Validate a provider article size at startup:
 
 ```sh
-transmission-daemon --usenet-enabled --usenet-check-article-size 3900000
+transmission-daemon --usenet-enabled --usenet-check-article-size 2097152
 ```
 
-`usenet_check_article_size` defaults to `3900000` bytes. This is a practical
-near-4 MB payload limit that leaves room for yEnc expansion and article headers
-on providers that enforce a roughly 4 MB final article size. Set it higher only
-after the provider startup check confirms that larger payloads can be posted and
-read back.
+`usenet_check_article_size` defaults to `2097152` bytes (2 MiB). This is a
+conservative raw piece limit that leaves substantial room for yEnc expansion and
+article headers on providers with a roughly 4 MB final article limit. Set it
+higher only after the provider startup check confirms that larger payloads can
+be posted and read back.
 
 Configure the shared Usenet upload/download IO limit:
 
@@ -175,7 +175,7 @@ The equivalent settings keys are:
 ```json
 {
   "usenet_enabled": true,
-  "usenet_check_article_size": 3900000,
+  "usenet_check_article_size": 2097152,
   "usenet_cache_size_mib": 0,
   "usenet_eviction_enabled": false,
   "usenet_eviction_min_age_minutes": 60,
@@ -398,7 +398,7 @@ Start a Usenet-enabled daemon:
   -w /path/to/downloads \
   -T -p 19191 -P 51441 --no-portmap \
   --usenet-enabled \
-  --usenet-check-article-size 3900000 \
+  --usenet-check-article-size 2097152 \
   --usenet-upload-concurrency 40 \
   --log-level=trace \
   -e /path/to/daemon.log

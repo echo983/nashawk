@@ -27,7 +27,7 @@
 namespace tr
 {
 
-inline constexpr size_t DefaultUsenetCheckArticleSize = 3'900'000U;
+inline constexpr size_t DefaultUsenetCheckArticleSize = 2U * 1024U * 1024U;
 
 namespace detail
 {

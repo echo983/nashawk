@@ -42,7 +42,7 @@ Config: /tmp/nashawk-webui-real/config
 Downloads: /tmp/nashawk-webui-real/downloads
 Incomplete: /tmp/nashawk-webui-real/incomplete
 Log: /tmp/nashawk-webui-real/daemon.log
-Usenet article size check: 3900000 bytes
+Usenet article size check: 2097152 bytes
 Usenet upload concurrency: 40
 Usenet discovery: enabled
 Usenet discovery sample size: 16
