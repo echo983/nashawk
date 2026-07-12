@@ -67,6 +67,7 @@
 #include "libtransmission/tr-lpd.h"
 #include "libtransmission/tr-macros.h"
 #include "libtransmission/types.h"
+#include "libtransmission/usenet-piece-store.h"
 #include "libtransmission/utils-ev.h"
 #include "libtransmission/verify.h"
 #include "libtransmission/web.h"
@@ -84,6 +85,7 @@ struct tr_usenet_runtime_snapshot
 {
     bool enabled = false;
     bool eviction_enabled = false;
+    bool discovery_enabled = false;
     size_t io_limit = 0U;
     size_t io_active = 0U;
     size_t upload_queue_size = 0U;
@@ -92,6 +94,7 @@ struct tr_usenet_runtime_snapshot
     size_t upload_concurrency = 0U;
     size_t eviction_min_age_minutes = 0U;
     size_t cache_size_mib = 0U;
+    size_t discovery_sample_size = 0U;
 };
 
 struct tr_usenet_piece_summary
@@ -105,6 +108,7 @@ struct tr_usenet_piece_summary
     size_t available = 0U;
     size_t failed = 0U;
     size_t servable = 0U;
+    tr_usenet_discovery_info discovery;
 };
 
 namespace tr::test
@@ -1062,6 +1066,7 @@ public:
 
     void addTorrent(tr_torrent* tor);
     void ensureUsenetTorrent(tr_torrent* tor);
+    void maybeQueueUsenetDiscovery(tr_torrent const& tor);
     void queueUsenetUploadsForLocalPieces(tr_torrent const& tor);
     [[nodiscard]] bool hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
     void addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield);
@@ -1328,6 +1333,39 @@ private:
     std::vector<std::pair<std::string, tr_piece_index_t>> usenet_download_in_flight_;
     std::unique_ptr<std::thread> usenet_download_thread_;
     bool usenet_download_stopping_ = false;
+
+    struct UsenetDiscoverySample
+    {
+        tr_piece_index_t piece = 0U;
+        std::string message_id;
+    };
+
+    struct UsenetDiscoveryTask
+    {
+        tr_torrent_id_t torrent_id = 0;
+        std::string info_hash_string;
+        std::vector<UsenetDiscoverySample> samples;
+        size_t requested_sample_size = 0U;
+    };
+
+    struct UsenetDiscoveryResult
+    {
+        UsenetDiscoveryTask task;
+        tr_usenet_discovery_state state = tr_usenet_discovery_state::Error;
+        std::string error;
+    };
+
+    void startUsenetDiscoveryWorker();
+    void stopUsenetDiscoveryWorker();
+    void enqueueUsenetDiscoveryTask(UsenetDiscoveryTask task);
+    void usenetDiscoveryWorker();
+    void onUsenetDiscoveryFinished(UsenetDiscoveryResult result);
+
+    std::mutex usenet_discovery_mutex_;
+    std::condition_variable usenet_discovery_cv_;
+    std::deque<UsenetDiscoveryTask> usenet_discovery_queue_;
+    std::unique_ptr<std::thread> usenet_discovery_thread_;
+    bool usenet_discovery_stopping_ = false;
 
     /// trivial type fields
 

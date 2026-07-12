@@ -743,6 +743,8 @@ enum // NOLINT(performance-enum-size)
     TR_KEY_usenet_cache_dir,
     TR_KEY_usenet_cache_size_mib,
     TR_KEY_usenet_check_article_size,
+    TR_KEY_usenet_discovery_enabled,
+    TR_KEY_usenet_discovery_sample_size,
     TR_KEY_usenet_download_in_flight,
     TR_KEY_usenet_download_queue_size,
     TR_KEY_usenet_enabled,

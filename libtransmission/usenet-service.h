@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 class tr_variant;
@@ -38,9 +39,23 @@ struct tr_usenet_download_request
     uint64_t expected_size = 0U;
 };
 
+struct tr_usenet_article_exists_request
+{
+    std::string_view config_dir;
+    std::string_view message_id;
+};
+
+enum class tr_usenet_article_exists_result : uint8_t
+{
+    Exists,
+    Missing,
+};
+
 [[nodiscard]] std::optional<std::string> tr_usenet_startup_check(std::string_view config_dir, tr_variant const& settings);
 [[nodiscard]] std::optional<std::string> tr_usenet_upload_file(tr_usenet_upload_request const& request);
 [[nodiscard]] std::optional<std::string> tr_usenet_upload_files(tr_usenet_upload_batch_request const& request);
+[[nodiscard]] std::variant<tr_usenet_article_exists_result, std::string> tr_usenet_article_exists(
+    tr_usenet_article_exists_request const& request);
 [[nodiscard]] std::optional<std::string> tr_usenet_download_piece(
     tr_usenet_download_request const& request,
     std::vector<uint8_t>& setme);

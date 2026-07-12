@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -37,6 +38,21 @@ auto constexpr Domain = "nashawk.local"sv;
     return tr_quark_new("last_local_at"sv);
 }
 
+[[nodiscard]] tr_quark key_checked_at()
+{
+    return tr_quark_new("checked_at"sv);
+}
+
+[[nodiscard]] tr_quark key_discovery()
+{
+    return tr_quark_new("discovery"sv);
+}
+
+[[nodiscard]] tr_quark key_error()
+{
+    return tr_quark_new("error"sv);
+}
+
 [[nodiscard]] tr_quark key_max_article_size()
 {
     return tr_quark_new("max_article_size"sv);
@@ -45,6 +61,16 @@ auto constexpr Domain = "nashawk.local"sv;
 [[nodiscard]] tr_quark key_message_id()
 {
     return tr_quark_new("message_id"sv);
+}
+
+[[nodiscard]] tr_quark key_sample_size()
+{
+    return tr_quark_new("sample_size"sv);
+}
+
+[[nodiscard]] tr_quark key_sampled_pieces()
+{
+    return tr_quark_new("sampled_pieces"sv);
 }
 
 [[nodiscard]] std::string make_dir(std::string_view config_dir)
@@ -73,6 +99,26 @@ auto constexpr Domain = "nashawk.local"sv;
     top.try_emplace(TR_KEY_piece_count, static_cast<int64_t>(std::size(manifest.pieces)));
     top.try_emplace(TR_KEY_piece_size, static_cast<int64_t>(manifest.piece_size));
     top.try_emplace(key_max_article_size(), static_cast<int64_t>(manifest.max_article_size));
+
+    auto discovery = tr_variant::Map{ 5U };
+    discovery.try_emplace(
+        TR_KEY_status,
+        tr_variant::unmanaged_string(tr_usenet_discovery_state_name(manifest.discovery.state)));
+    discovery.try_emplace(key_checked_at(), static_cast<int64_t>(manifest.discovery.checked_at));
+    discovery.try_emplace(key_sample_size(), static_cast<int64_t>(manifest.discovery.sample_size));
+    if (!std::empty(manifest.discovery.error))
+    {
+        discovery.try_emplace(key_error(), manifest.discovery.error);
+    }
+
+    auto sampled_pieces = tr_variant::Vector{};
+    sampled_pieces.reserve(std::size(manifest.discovery.sampled_pieces));
+    for (auto const piece : manifest.discovery.sampled_pieces)
+    {
+        sampled_pieces.emplace_back(static_cast<int64_t>(piece));
+    }
+    discovery.try_emplace(key_sampled_pieces(), std::move(sampled_pieces));
+    top.try_emplace(key_discovery(), std::move(discovery));
 
     auto pieces = tr_variant::Vector{};
     pieces.reserve(std::size(manifest.pieces));
@@ -131,6 +177,53 @@ auto constexpr Domain = "nashawk.local"sv;
     if (std::empty(manifest.info_hash_string) || pieces == nullptr)
     {
         return {};
+    }
+
+    if (auto const* discovery = top->find_if<tr_variant::Map>(key_discovery()); discovery != nullptr)
+    {
+        if (auto const status = discovery->value_if<std::string_view>(TR_KEY_status); status)
+        {
+            if (auto const state = tr_usenet_discovery_state_from_name(*status); state)
+            {
+                manifest.discovery.state = *state;
+            }
+            else
+            {
+                return {};
+            }
+        }
+
+        if (auto const checked_at = discovery->value_if<int64_t>(key_checked_at()); checked_at && *checked_at > 0)
+        {
+            manifest.discovery.checked_at = static_cast<uint64_t>(*checked_at);
+        }
+
+        if (auto const sample_size = discovery->value_if<int64_t>(key_sample_size()); sample_size && *sample_size > 0)
+        {
+            manifest.discovery.sample_size = static_cast<size_t>(*sample_size);
+        }
+
+        if (auto const error = discovery->value_if<std::string_view>(key_error()); error)
+        {
+            manifest.discovery.error = *error;
+        }
+
+        if (auto const* sampled_pieces = discovery->find_if<tr_variant::Vector>(key_sampled_pieces());
+            sampled_pieces != nullptr)
+        {
+            manifest.discovery.sampled_pieces.reserve(std::size(*sampled_pieces));
+            for (auto const& value : *sampled_pieces)
+            {
+                if (auto const piece = value.value_if<int64_t>(); piece && *piece >= 0)
+                {
+                    manifest.discovery.sampled_pieces.push_back(static_cast<tr_piece_index_t>(*piece));
+                }
+                else
+                {
+                    return {};
+                }
+            }
+        }
     }
 
     manifest.pieces.reserve(std::size(*pieces));
@@ -227,6 +320,105 @@ std::optional<tr_usenet_piece_state> tr_usenet_piece_state_from_name(std::string
     return {};
 }
 
+std::string_view tr_usenet_discovery_state_name(tr_usenet_discovery_state const state) noexcept
+{
+    switch (state)
+    {
+    case tr_usenet_discovery_state::NotChecked:
+        return "not_checked"sv;
+    case tr_usenet_discovery_state::Checking:
+        return "checking"sv;
+    case tr_usenet_discovery_state::Available:
+        return "available"sv;
+    case tr_usenet_discovery_state::Missing:
+        return "missing"sv;
+    case tr_usenet_discovery_state::Error:
+        return "error"sv;
+    }
+
+    return "not_checked"sv;
+}
+
+std::optional<tr_usenet_discovery_state> tr_usenet_discovery_state_from_name(std::string_view const name) noexcept
+{
+    if (name == "not_checked"sv)
+    {
+        return tr_usenet_discovery_state::NotChecked;
+    }
+    if (name == "checking"sv)
+    {
+        return tr_usenet_discovery_state::Checking;
+    }
+    if (name == "available"sv)
+    {
+        return tr_usenet_discovery_state::Available;
+    }
+    if (name == "missing"sv)
+    {
+        return tr_usenet_discovery_state::Missing;
+    }
+    if (name == "error"sv)
+    {
+        return tr_usenet_discovery_state::Error;
+    }
+
+    return {};
+}
+
+std::vector<tr_piece_index_t> tr_usenet_discovery_sample_pieces(
+    std::string_view const info_hash_string,
+    tr_piece_index_t const piece_count,
+    size_t const sample_size)
+{
+    auto samples = std::vector<tr_piece_index_t>{};
+    if (piece_count == 0U || sample_size == 0U)
+    {
+        return samples;
+    }
+
+    auto const wanted = std::min<size_t>(sample_size, piece_count);
+    if (wanted == piece_count)
+    {
+        samples.reserve(wanted);
+        for (tr_piece_index_t piece = 0U; piece < piece_count; ++piece)
+        {
+            samples.push_back(piece);
+        }
+        return samples;
+    }
+
+    samples.reserve(wanted);
+
+    auto add = [&samples, piece_count, wanted](tr_piece_index_t const piece)
+    {
+        if (piece < piece_count && std::size(samples) < wanted &&
+            std::find(std::begin(samples), std::end(samples), piece) == std::end(samples))
+        {
+            samples.push_back(piece);
+        }
+    };
+
+    add(0U);
+    add(piece_count - 1U);
+    add(piece_count / 2U);
+
+    auto seed = uint64_t{ 1469598103934665603ULL };
+    for (auto const ch : info_hash_string)
+    {
+        seed ^= static_cast<unsigned char>(ch);
+        seed *= 1099511628211ULL;
+    }
+
+    while (std::size(samples) < wanted)
+    {
+        seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+        add(static_cast<tr_piece_index_t>(seed % piece_count));
+    }
+
+    std::sort(std::begin(samples), std::end(samples));
+    return samples;
+}
+
 bool tr_usenet_piece_is_eviction_eligible(
     tr_usenet_piece_entry const& entry,
     bool const has_local_piece,
@@ -266,6 +458,14 @@ bool tr_usenet_piece_manifest::has_message_id_state(std::string_view const messa
         [message_id, state](auto const& entry) { return entry.message_id == message_id && entry.state == state; });
 }
 
+bool tr_usenet_piece_manifest::has_meaningful_state() const noexcept
+{
+    return std::any_of(
+        std::begin(pieces),
+        std::end(pieces),
+        [](auto const& entry) { return entry.state != tr_usenet_piece_state::Unknown; });
+}
+
 void tr_usenet_piece_manifest::set_piece_state(tr_piece_index_t const piece, tr_usenet_piece_state const state)
 {
     if (piece < std::size(pieces))
@@ -300,6 +500,14 @@ void tr_usenet_piece_manifest::set_message_id_state(std::string_view const messa
         {
             set_piece_state(piece, state);
         }
+    }
+}
+
+void tr_usenet_piece_manifest::set_all_piece_states(tr_usenet_piece_state const state)
+{
+    for (tr_piece_index_t piece = 0U; piece < std::size(pieces); ++piece)
+    {
+        set_piece_state(piece, state);
     }
 }
 

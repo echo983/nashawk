@@ -40,6 +40,7 @@
 #include "libtransmission/error.h"
 #include "libtransmission/file.h"
 #include "libtransmission/quark.h"
+#include "libtransmission/session-settings.h"
 #include "libtransmission/subprocess.h"
 #include "libtransmission/tr-strbuf.h"
 #include "libtransmission/variant.h"
@@ -908,6 +909,16 @@ public:
         return command("GROUP " + name, { 211 });
     }
 
+    [[nodiscard]] std::variant<tr_usenet_article_exists_result, std::string> stat(std::string const& message_id)
+    {
+        if (auto error = command("STAT <" + message_id + ">", { 223, 430 }); error)
+        {
+            return *error;
+        }
+
+        return last_code_ == 223 ? tr_usenet_article_exists_result::Exists : tr_usenet_article_exists_result::Missing;
+    }
+
     [[nodiscard]] std::optional<std::string> post(std::string const& article)
     {
         if (auto error = command("POST", { 340 }); error)
@@ -928,7 +939,7 @@ public:
 
         if (parse_code(line) != 240)
         {
-            return "Usenet POST failed";
+            return fmt::format("Usenet POST failed: {}", line);
         }
 
         return {};
@@ -1228,7 +1239,7 @@ std::optional<std::string> tr_usenet_startup_check(std::string_view const config
         return post_error;
     }
 
-    auto const check_size = settings_size(settings, TR_KEY_usenet_check_article_size, 1024U * 1024U);
+    auto const check_size = settings_size(settings, TR_KEY_usenet_check_article_size, tr::DefaultUsenetCheckArticleSize);
     if (check_size > 64U)
     {
         if (auto post_error = check_post_read(*config, check_size, "configured"sv); post_error)
@@ -1352,6 +1363,43 @@ std::optional<std::string> tr_usenet_upload_files(tr_usenet_upload_batch_request
     }
 
     return {};
+}
+
+std::variant<tr_usenet_article_exists_result, std::string> tr_usenet_article_exists(
+    tr_usenet_article_exists_request const& request)
+{
+    auto const message_id = normalized_message_id(request.message_id);
+    if (std::empty(message_id))
+    {
+        return "Usenet article existence check requires a message id";
+    }
+
+    auto error = std::string{};
+    auto const config = load_usenet_config(request.config_dir, error);
+    if (!config)
+    {
+        return error;
+    }
+
+#ifdef _WIN32
+    return "Usenet article existence check is not implemented on Windows yet";
+#else
+    auto connection = NntpConnection{};
+    if (auto connect_error = connection.connect_to(*config); connect_error)
+    {
+        return *connect_error;
+    }
+    if (auto auth_error = connection.auth(*config); auth_error)
+    {
+        return *auth_error;
+    }
+    if (auto group_error = connection.group(config->group); group_error)
+    {
+        return *group_error;
+    }
+
+    return connection.stat(message_id);
+#endif
 }
 
 std::optional<std::string> tr_usenet_download_piece(tr_usenet_download_request const& request, std::vector<uint8_t>& setme)

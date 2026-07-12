@@ -662,6 +662,8 @@ TEST_F(RpcTest, sessionGet)
         TR_KEY_trash_original_torrent_files,
         TR_KEY_units,
         TR_KEY_usenet_cache_size_mib,
+        TR_KEY_usenet_discovery_enabled,
+        TR_KEY_usenet_discovery_sample_size,
         TR_KEY_usenet_enabled,
         TR_KEY_usenet_eviction_enabled,
         TR_KEY_usenet_eviction_min_age_minutes,
@@ -711,6 +713,8 @@ TEST_F(RpcTest, sessionStatsIncludesUsenetRuntimeSnapshot)
     ASSERT_NE(usenet, nullptr);
 
     EXPECT_FALSE(usenet->value_if<bool>(TR_KEY_usenet_enabled).value_or(true));
+    EXPECT_TRUE(usenet->value_if<bool>(TR_KEY_usenet_discovery_enabled).value_or(false));
+    EXPECT_EQ(16, usenet->value_if<int64_t>(TR_KEY_usenet_discovery_sample_size).value_or(-1));
     EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_io_limit).value_or(-1));
     EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_io_active).value_or(-1));
     EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_upload_queue_size).value_or(-1));
