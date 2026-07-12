@@ -35,6 +35,30 @@ build/tests/libtransmission/libtransmission-test \
 No stage may weaken normal BitTorrent fallback or local piece checksum
 verification.
 
+## Implementation Progress
+
+Completed on `feature/usenet-multipart-pieces`:
+
+- deterministic base and continuation Message-IDs and bounded part planning;
+- manifest v2 chain metadata with v1 compatibility;
+- exact-size multipart download assembly and final piece hash verification;
+- multipart Nyuu upload batches with complete-chain readback on ambiguous
+  errors;
+- discovery validation of complete sampled chains;
+- related build, format, and focused regression checks (`95/95`).
+
+Real-provider validation on 2026-07-12 used generated trackerless data with one
+4 MiB piece and a 2 MiB article payload limit. Upload produced two articles and
+persisted `article_count: 2`. A fresh Nashawk instance discovered the chain, a
+normal BitTorrent client requested it, Nashawk restored the piece from Usenet,
+and all three SHA-1 values (source, restored cache, and receiving client)
+matched.
+
+The first smoke attempt exposed a Nyuu template pitfall: `{fnamebase}` removes
+multiple suffixes, mapping both `hash.piece` and `hash.1.piece` to `hash`. The
+implementation now stages extensionless `hash`/`hash.1` files and uses
+`{filename}`, preserving deterministic continuation IDs.
+
 ## Commit 1: Multipart Format Helpers
 
 ### Production changes
