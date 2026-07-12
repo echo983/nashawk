@@ -349,7 +349,7 @@ TEST_F(SessionTest, usenetInitializationFailureKeepsNewTorrentStopped)
     tr_sessionClose(session, 0.5);
 }
 
-TEST_F(SessionTest, usenetMultipartPieceSizeIsAdmittedWithoutLegacyDiscovery)
+TEST_F(SessionTest, usenetMultipartPieceSizeIsAdmittedAndQueuesChainDiscovery)
 {
     auto const config_dir = tr_pathbuf{ sandboxDir(), "/usenet-multipart-admission"sv };
     ASSERT_TRUE(tr_sys_dir_create(config_dir, TR_SYS_DIR_CREATE_PARENTS, 0700));
@@ -382,7 +382,8 @@ TEST_F(SessionTest, usenetMultipartPieceSizeIsAdmittedWithoutLegacyDiscovery)
     auto const summary = session->usenetPieceSummary(*tor);
     EXPECT_TRUE(summary.eligible);
     EXPECT_TRUE(summary.manifest_present);
-    EXPECT_EQ(tr_usenet_discovery_state::NotChecked, summary.discovery.state);
+    EXPECT_NE(tr_usenet_discovery_state::NotChecked, summary.discovery.state);
+    EXPECT_NE(tr_usenet_discovery_state::Available, summary.discovery.state);
 
     tr_sessionClose(session, 0.5);
 }

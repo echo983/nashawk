@@ -2617,12 +2617,6 @@ void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
         return;
     }
 
-    if (tor.piece_size() > usenet_piece_store_->max_article_size())
-    {
-        tr_logAddTraceTor(&tor, "Deferred Usenet discovery until multipart chain validation is available");
-        return;
-    }
-
     auto samples = std::vector<UsenetDiscoverySample>{};
     auto error = std::optional<std::string>{};
     {
@@ -2650,7 +2644,13 @@ void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
         samples.reserve(std::size(sample_pieces));
         for (auto const piece : sample_pieces)
         {
-            samples.push_back({ .piece = piece, .message_id = manifest->pieces[piece].message_id });
+            samples.push_back(
+                {
+                    .piece = piece,
+                    .message_id = manifest->pieces[piece].message_id,
+                    .expected_size = tor.piece_size(piece),
+                    .expected_hash = tor.piece_hash(piece),
+                });
         }
 
         manifest->discovery.state = tr_usenet_discovery_state::Checking;
@@ -3209,27 +3209,24 @@ void tr_session::usenetDiscoveryWorker()
                 break;
             }
 
-            auto exists = tr_usenet_article_exists(
+            auto chain = tr_usenet_download_result{};
+            auto error = tr_usenet_download_piece_chain(
                 {
                     .config_dir = config_dir_,
                     .message_id = sample.message_id,
-                });
+                    .expected_size = sample.expected_size,
+                    .expected_hash = sample.expected_hash,
+                },
+                chain);
             releaseUsenetIoSlot();
 
-            if (auto const* state = std::get_if<tr_usenet_article_exists_result>(&exists); state != nullptr)
+            if (!error)
             {
-                if (*state == tr_usenet_article_exists_result::Missing)
-                {
-                    result.state = tr_usenet_discovery_state::Missing;
-                    result.error = fmt::format("Sample piece {} was missing from Usenet", sample.piece);
-                    break;
-                }
-
                 continue;
             }
 
-            result.state = tr_usenet_discovery_state::Error;
-            result.error = std::get<std::string>(exists);
+            result.state = tr_usenet_discovery_state::Missing;
+            result.error = fmt::format("Sample piece {} failed Usenet chain validation: {}", sample.piece, *error);
             break;
         }
 
