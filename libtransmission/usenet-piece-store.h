@@ -17,6 +17,7 @@
 struct tr_torrent_metainfo;
 
 inline constexpr size_t TrUsenetMaxArticlesPerPiece = 1024U;
+inline constexpr uint32_t TrUsenetPieceManifestVersion = 2U;
 
 struct tr_usenet_piece_part
 {
@@ -59,6 +60,8 @@ struct tr_usenet_piece_entry
     uint64_t available_at = 0U;
     uint64_t last_local_at = 0U;
     std::string message_id;
+    size_t article_count = 0U;
+    uint64_t article_payload_size = 0U;
 };
 
 struct tr_usenet_discovery_info
@@ -72,7 +75,7 @@ struct tr_usenet_discovery_info
 
 struct tr_usenet_piece_manifest
 {
-    uint32_t version = 1U;
+    uint32_t version = TrUsenetPieceManifestVersion;
     std::string info_hash_string;
     uint64_t piece_size = 0U;
     uint64_t max_article_size = 0U;
@@ -85,8 +88,16 @@ struct tr_usenet_piece_manifest
     [[nodiscard]] bool has_message_id_state(std::string_view message_id, tr_usenet_piece_state state) const noexcept;
     [[nodiscard]] bool has_meaningful_state() const noexcept;
 
-    void set_piece_state(tr_piece_index_t piece, tr_usenet_piece_state state);
-    void set_message_id_state(std::string_view message_id, tr_usenet_piece_state state);
+    void set_piece_state(
+        tr_piece_index_t piece,
+        tr_usenet_piece_state state,
+        std::optional<size_t> article_count = {},
+        std::optional<uint64_t> article_payload_size = {});
+    void set_message_id_state(
+        std::string_view message_id,
+        tr_usenet_piece_state state,
+        std::optional<size_t> article_count = {},
+        std::optional<uint64_t> article_payload_size = {});
     void set_all_piece_states(tr_usenet_piece_state state);
 };
 
@@ -105,11 +116,15 @@ public:
     [[nodiscard]] std::optional<std::string> set_piece_state(
         std::string_view info_hash_string,
         tr_piece_index_t piece,
-        tr_usenet_piece_state state) const;
+        tr_usenet_piece_state state,
+        std::optional<size_t> article_count = {},
+        std::optional<uint64_t> article_payload_size = {}) const;
     [[nodiscard]] std::optional<std::string> set_message_id_state(
         std::string_view info_hash_string,
         std::string_view message_id,
-        tr_usenet_piece_state state) const;
+        tr_usenet_piece_state state,
+        std::optional<size_t> article_count = {},
+        std::optional<uint64_t> article_payload_size = {}) const;
     [[nodiscard]] std::optional<std::string> note_piece_local_activity(
         std::string_view info_hash_string,
         tr_piece_index_t piece) const;

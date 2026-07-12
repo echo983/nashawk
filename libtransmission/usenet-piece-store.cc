@@ -34,6 +34,16 @@ auto constexpr Domain = "nashawk.local"sv;
     return tr_quark_new("available_at"sv);
 }
 
+[[nodiscard]] tr_quark key_article_count()
+{
+    return tr_quark_new("article_count"sv);
+}
+
+[[nodiscard]] tr_quark key_article_payload_size()
+{
+    return tr_quark_new("article_payload_size"sv);
+}
+
 [[nodiscard]] tr_quark key_last_local_at()
 {
     return tr_quark_new("last_local_at"sv);
@@ -90,7 +100,7 @@ auto constexpr Domain = "nashawk.local"sv;
 [[nodiscard]] tr_variant manifest_to_variant(tr_usenet_piece_manifest const& manifest)
 {
     auto top = tr_variant::Map{ 6U };
-    top.try_emplace(TR_KEY_version, int64_t{ manifest.version });
+    top.try_emplace(TR_KEY_version, int64_t{ TrUsenetPieceManifestVersion });
     top.try_emplace(TR_KEY_hash_string, manifest.info_hash_string);
     top.try_emplace(TR_KEY_piece_count, static_cast<int64_t>(std::size(manifest.pieces)));
     top.try_emplace(TR_KEY_piece_size, static_cast<int64_t>(manifest.piece_size));
@@ -120,7 +130,7 @@ auto constexpr Domain = "nashawk.local"sv;
     pieces.reserve(std::size(manifest.pieces));
     for (auto const& piece : manifest.pieces)
     {
-        auto entry = tr_variant::Map{ 4U };
+        auto entry = tr_variant::Map{ 6U };
         entry.try_emplace(TR_KEY_status, tr_variant::unmanaged_string(tr_usenet_piece_state_name(piece.state)));
         entry.try_emplace(key_message_id(), piece.message_id);
         if (piece.available_at != 0U)
@@ -130,6 +140,11 @@ auto constexpr Domain = "nashawk.local"sv;
         if (piece.last_local_at != 0U)
         {
             entry.try_emplace(key_last_local_at(), static_cast<int64_t>(piece.last_local_at));
+        }
+        if (piece.article_count != 0U)
+        {
+            entry.try_emplace(key_article_count(), static_cast<int64_t>(piece.article_count));
+            entry.try_emplace(key_article_payload_size(), static_cast<int64_t>(piece.article_payload_size));
         }
         pieces.emplace_back(std::move(entry));
     }
@@ -147,9 +162,14 @@ auto constexpr Domain = "nashawk.local"sv;
     }
 
     auto manifest = tr_usenet_piece_manifest{};
+    manifest.version = 1U;
 
-    if (auto const version = top->value_if<int64_t>(TR_KEY_version); version && *version > 0)
+    if (auto const version = top->value_if<int64_t>(TR_KEY_version); version)
     {
+        if (*version <= 0 || *version > TrUsenetPieceManifestVersion)
+        {
+            return {};
+        }
         manifest.version = static_cast<uint32_t>(*version);
     }
 
@@ -257,6 +277,29 @@ auto constexpr Domain = "nashawk.local"sv;
         if (auto const last_local_at = entry->value_if<int64_t>(key_last_local_at()); last_local_at && *last_local_at > 0)
         {
             piece.last_local_at = static_cast<uint64_t>(*last_local_at);
+        }
+
+        if (auto const article_count = entry->value_if<int64_t>(key_article_count()); article_count)
+        {
+            if (*article_count < 0 || *article_count > static_cast<int64_t>(TrUsenetMaxArticlesPerPiece))
+            {
+                return {};
+            }
+            piece.article_count = static_cast<size_t>(*article_count);
+        }
+
+        if (auto const article_payload_size = entry->value_if<int64_t>(key_article_payload_size()); article_payload_size)
+        {
+            if (*article_payload_size < 0)
+            {
+                return {};
+            }
+            piece.article_payload_size = static_cast<uint64_t>(*article_payload_size);
+        }
+
+        if (piece.article_count == 0U)
+        {
+            piece.article_payload_size = 0U;
         }
 
         if (std::empty(piece.message_id))
@@ -533,7 +576,11 @@ bool tr_usenet_piece_manifest::has_meaningful_state() const noexcept
         [](auto const& entry) { return entry.state != tr_usenet_piece_state::Unknown; });
 }
 
-void tr_usenet_piece_manifest::set_piece_state(tr_piece_index_t const piece, tr_usenet_piece_state const state)
+void tr_usenet_piece_manifest::set_piece_state(
+    tr_piece_index_t const piece,
+    tr_usenet_piece_state const state,
+    std::optional<size_t> const article_count,
+    std::optional<uint64_t> const article_payload_size)
 {
     if (piece < std::size(pieces))
     {
@@ -550,22 +597,37 @@ void tr_usenet_piece_manifest::set_piece_state(tr_piece_index_t const piece, tr_
 
             entry.last_local_at = timestamp;
         }
-        else if (previous_state == tr_usenet_piece_state::Available)
+        else
         {
-            entry.available_at = 0U;
+            if (previous_state == tr_usenet_piece_state::Available)
+            {
+                entry.available_at = 0U;
+            }
+            entry.article_count = 0U;
+            entry.article_payload_size = 0U;
         }
 
-        pieces[piece].state = state;
+        if (state == tr_usenet_piece_state::Available && article_count)
+        {
+            entry.article_count = *article_count;
+            entry.article_payload_size = *article_count == 0U ? 0U : article_payload_size.value_or(0U);
+        }
+
+        entry.state = state;
     }
 }
 
-void tr_usenet_piece_manifest::set_message_id_state(std::string_view const message_id, tr_usenet_piece_state const state)
+void tr_usenet_piece_manifest::set_message_id_state(
+    std::string_view const message_id,
+    tr_usenet_piece_state const state,
+    std::optional<size_t> const article_count,
+    std::optional<uint64_t> const article_payload_size)
 {
     for (tr_piece_index_t piece = 0U; piece < std::size(pieces); ++piece)
     {
         if (pieces[piece].message_id == message_id)
         {
-            set_piece_state(piece, state);
+            set_piece_state(piece, state, article_count, article_payload_size);
         }
     }
 }
@@ -625,7 +687,9 @@ std::optional<std::string> tr_usenet_piece_store::ensure_torrent(tr_torrent_meta
 std::optional<std::string> tr_usenet_piece_store::set_piece_state(
     std::string_view const info_hash_string,
     tr_piece_index_t const piece,
-    tr_usenet_piece_state const state) const
+    tr_usenet_piece_state const state,
+    std::optional<size_t> const article_count,
+    std::optional<uint64_t> const article_payload_size) const
 {
     auto manifest = load(info_hash_string);
     if (!manifest)
@@ -638,7 +702,16 @@ std::optional<std::string> tr_usenet_piece_store::set_piece_state(
         return fmt::format("Usenet piece index {} is out of range", piece);
     }
 
-    manifest->set_piece_state(piece, state);
+    if (article_count && *article_count > TrUsenetMaxArticlesPerPiece)
+    {
+        return "Usenet article count exceeds safety limit";
+    }
+    if (article_payload_size && !article_count)
+    {
+        return "Usenet article payload size requires an article count";
+    }
+
+    manifest->set_piece_state(piece, state, article_count, article_payload_size);
     if (!save(*manifest))
     {
         return "Could not save Usenet piece manifest";
@@ -650,7 +723,9 @@ std::optional<std::string> tr_usenet_piece_store::set_piece_state(
 std::optional<std::string> tr_usenet_piece_store::set_message_id_state(
     std::string_view const info_hash_string,
     std::string_view const message_id,
-    tr_usenet_piece_state const state) const
+    tr_usenet_piece_state const state,
+    std::optional<size_t> const article_count,
+    std::optional<uint64_t> const article_payload_size) const
 {
     auto manifest = load(info_hash_string);
     if (!manifest)
@@ -663,7 +738,16 @@ std::optional<std::string> tr_usenet_piece_store::set_message_id_state(
         return "Usenet message id is empty";
     }
 
-    manifest->set_message_id_state(message_id, state);
+    if (article_count && *article_count > TrUsenetMaxArticlesPerPiece)
+    {
+        return "Usenet article count exceeds safety limit";
+    }
+    if (article_payload_size && !article_count)
+    {
+        return "Usenet article payload size requires an article count";
+    }
+
+    manifest->set_message_id_state(message_id, state, article_count, article_payload_size);
     if (!save(*manifest))
     {
         return "Could not save Usenet piece manifest";
@@ -714,6 +798,8 @@ std::optional<std::string> tr_usenet_piece_store::reset_interrupted_uploads(
         {
             manifest->pieces[piece].state = tr_usenet_piece_state::Unknown;
             manifest->pieces[piece].available_at = 0U;
+            manifest->pieces[piece].article_count = 0U;
+            manifest->pieces[piece].article_payload_size = 0U;
             pieces.push_back(piece);
         }
     }
