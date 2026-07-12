@@ -88,7 +88,7 @@ static_assert(TrDefaultPeerPort == 51413, "update 'peerport' desc");
 static_assert(TrDefaultPeerLimitTorrent == 50, "update 'peerlimit-torrent' desc");
 static_assert(TrDefaultPeerLimitGlobal == 200, "update 'peerlimit-global' desc");
 static_assert(TrDefaultRpcPort == 9091 && R"(update "port" desc)");
-auto constexpr Options = std::array<tr_option, 57>{ {
+auto constexpr Options = std::array<tr_option, 58>{ {
     { 'a', "allowed", "Allowed IP addresses. (Default: '127.0.0.1,::1')", "a", Arg::Required, "<list>" },
     { 'b', "blocklist", "Enable peer blocklists", "b", Arg::None, nullptr },
     { 'B', "no-blocklist", "Disable peer blocklists", "B", Arg::None, nullptr },
@@ -169,6 +169,12 @@ auto constexpr Options = std::array<tr_option, 57>{ {
       nullptr,
       Arg::Required,
       "<count>" },
+    { 842,
+      "no-version-compat",
+      "Expose Nashawk's real development version instead of Transmission 4.1.2-compatible identifiers",
+      nullptr,
+      Arg::None,
+      nullptr },
     { 'P', "peerport", "Port for incoming peers (Default: 51413)", "P", Arg::Required, "<port>" },
     { 'm', "portmap", "Enable portmapping via NAT-PMP or UPnP", "m", Arg::None, nullptr },
     { 'M', "no-portmap", "Disable portmapping", "M", Arg::None, nullptr },
@@ -634,7 +640,7 @@ bool tr_daemon::parse_args(int argc, char const* const* argv, bool* dump_setting
             break;
 
         case 'V': /* version */
-            fprintf(stderr, "%s %s\n", MyName, LONG_VERSION_STRING);
+            fprintf(stderr, "%s %s\n", MyName, tr_display_long_version_string());
             *exit_code = 0;
             return false;
 
@@ -842,6 +848,10 @@ bool tr_daemon::parse_args(int argc, char const* const* argv, bool* dump_setting
             {
                 map->insert_or_assign(TR_KEY_usenet_discovery_sample_size, *sample_size);
             }
+            break;
+
+        case 842:
+            tr_set_version_compat_enabled(false);
             break;
 
         case TR_OPT_UNK:

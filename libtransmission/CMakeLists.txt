@@ -184,6 +184,7 @@ target_sources(${TR_NAME}
         variant.h
         verify.cc
         verify.h
+        version.cc
         version.h.in
         watchdir-base.h
         watchdir-generic.cc

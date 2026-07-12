@@ -333,6 +333,29 @@ The browser can emit stable diagnostic console messages with the
 diagnostics intentionally exclude Usenet host, port, username, password, group,
 and `.env` contents.
 
+## Version Compatibility Mode
+
+For compatibility testing, Nashawk defaults to exposing Transmission
+4.1.2-compatible external identifiers:
+
+- peer ID prefix: `-TR4120-`
+- peer extension handshake client string: `Transmission 4.1.2`
+- HTTP User-Agent: `Transmission/4.1.2`
+- RPC/session version: `4.1.2 (00000000)`
+
+This does not change the internal build or codebase. To expose the real Nashawk
+development version instead, start the daemon with:
+
+```bash
+--no-version-compat
+```
+
+The bundled helper scripts also accept:
+
+```bash
+NASHAWK_VERSION_COMPAT_ENABLED=0
+```
+
 ## Deleting Local Data
 
 After pieces have been uploaded and marked `available`, local data may be

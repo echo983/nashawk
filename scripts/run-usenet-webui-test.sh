@@ -16,6 +16,7 @@ usenet_eviction_min_age_minutes="${NASHAWK_USENET_EVICTION_MIN_AGE_MINUTES:-1}"
 usenet_cache_size_mib="${NASHAWK_USENET_CACHE_SIZE_MIB:-0}"
 usenet_discovery_enabled="${NASHAWK_USENET_DISCOVERY_ENABLED:-1}"
 usenet_discovery_sample_size="${NASHAWK_USENET_DISCOVERY_SAMPLE_SIZE:-16}"
+version_compat_enabled="${NASHAWK_VERSION_COMPAT_ENABLED:-1}"
 log_level="${NASHAWK_LOG_LEVEL:-info}"
 log_file="${NASHAWK_LOG_FILE:-$test_root/daemon.log}"
 node_version="${NASHAWK_NODE_VERSION:-24.18.0}"
@@ -81,6 +82,11 @@ else
 fi
 discovery_args+=(--usenet-discovery-sample-size "$usenet_discovery_sample_size")
 
+version_args=()
+if [[ "$version_compat_enabled" == 0 || "$version_compat_enabled" == false ]]; then
+    version_args+=(--no-version-compat)
+fi
+
 exec "$daemon" -f \
     -g "$config_dir" \
     -w "$download_dir" \
@@ -95,5 +101,6 @@ exec "$daemon" -f \
     --usenet-eviction-min-age-minutes "$usenet_eviction_min_age_minutes" \
     --usenet-cache-size-mib "$usenet_cache_size_mib" \
     "${discovery_args[@]}" \
+    "${version_args[@]}" \
     --log-level="$log_level" \
     -e "$log_file"

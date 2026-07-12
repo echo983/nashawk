@@ -1230,7 +1230,8 @@ void tr_peerMsgsImpl::send_ltep_handshake()
     // Client name and version (as a utf-8 string). This is a much more
     // reliable way of identifying the client than relying on the
     // peer id encoding.
-    val.try_emplace(TR_KEY_v, tr_variant::unmanaged_string(TR_NAME " " USERAGENT_PREFIX));
+    auto const client_version = fmt::format("{:s} {:s}", tr_display_client_name(), tr_display_user_agent_prefix());
+    val.try_emplace(TR_KEY_v, tr_variant{ client_version });
 
     // https://www.bittorrent.org/beps/bep_0021.html
     // A peer that is a partial seed SHOULD include an extra header in

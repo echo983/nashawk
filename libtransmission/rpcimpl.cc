@@ -2736,7 +2736,7 @@ using SessionAccessors = std::pair<SessionGetter, SessionSetter>;
 
     map.try_emplace(
         TR_KEY_version,
-        [](tr_session const& /*src*/) -> tr_variant { return tr_variant::unmanaged_string(LONG_VERSION_STRING); },
+        [](tr_session const& /*src*/) -> tr_variant { return tr_variant::unmanaged_string(tr_display_long_version_string()); },
         nullptr);
 
     // `row` could have been replaced by structured bindings,

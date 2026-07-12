@@ -162,28 +162,37 @@ TEST_F(SessionTest, propertiesApi)
 
 TEST_F(SessionTest, peerId)
 {
-    auto const peer_id_prefix = std::string{ PEERID_PREFIX };
-
-    for (int i = 0; i < 100000; ++i)
+    auto const check_peer_id_prefix = [](std::string_view peer_id_prefix)
     {
-        // get a new peer-id
-        auto const buf = tr_peerIdInit();
-
-        // confirm that it begins with peer_id_prefix
-        auto const peer_id = std::string_view{ reinterpret_cast<char const*>(buf.data()), std::size(buf) };
-        EXPECT_EQ(peer_id_prefix, peer_id.substr(0, peer_id_prefix.size()));
-
-        // confirm that its total is evenly divisible by 36
-        int val = 0;
-        auto const suffix = peer_id.substr(peer_id_prefix.size());
-        for (char const ch : suffix)
+        for (int i = 0; i < 100000; ++i)
         {
-            auto const tmp = std::array<char, 2>{ ch, '\0' };
-            val += strtoul(tmp.data(), nullptr, 36);
-        }
+            // get a new peer-id
+            auto const buf = tr_peerIdInit();
 
-        EXPECT_EQ(0, val % 36);
-    }
+            // confirm that it begins with peer_id_prefix
+            auto const peer_id = std::string_view{ reinterpret_cast<char const*>(buf.data()), std::size(buf) };
+            EXPECT_EQ(peer_id_prefix, peer_id.substr(0, peer_id_prefix.size()));
+
+            // confirm that its total is evenly divisible by 36
+            int val = 0;
+            auto const suffix = peer_id.substr(peer_id_prefix.size());
+            for (char const ch : suffix)
+            {
+                auto const tmp = std::array<char, 2>{ ch, '\0' };
+                val += strtoul(tmp.data(), nullptr, 36);
+            }
+
+            EXPECT_EQ(0, val % 36);
+        }
+    };
+
+    tr_set_version_compat_enabled(true);
+    check_peer_id_prefix(COMPAT_PEERID_PREFIX);
+
+    tr_set_version_compat_enabled(false);
+    check_peer_id_prefix(PEERID_PREFIX);
+
+    tr_set_version_compat_enabled(true);
 }
 
 namespace current_time_mock
