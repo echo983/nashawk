@@ -19,7 +19,10 @@ Nashawk adds an experimental Usenet-backed piece storage mode for
 `transmission-daemon`. When enabled, verified BitTorrent pieces can be uploaded
 as one yEnc Usenet article per piece, later restored on demand, and optionally
 evicted from local torrent files to reduce disk usage on storage-constrained
-hosts.
+hosts. The current implementation also exposes Usenet serving state in the Web
+UI and can sample deterministic piece Message-IDs after magnet metadata is
+available, allowing a node to discover torrents that another Nashawk node has
+already populated in Usenet.
 
 Start with [Nashawk Usenet piece backend](docs/Usenet-Piece-Backend-README.md)
 for setup, safety notes, daemon flags, and validation steps.

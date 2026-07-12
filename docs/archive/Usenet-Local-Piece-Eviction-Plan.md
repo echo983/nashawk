@@ -5,7 +5,7 @@ Status: Archived.
 This plan has been implemented for the first conservative local piece eviction
 pass. The current implementation can evict Usenet-available local pieces with
 hole punching, preserve peer-facing Usenet availability, and restore evicted
-pieces from Usenet on peer demand. Use `docs/Usenet-Piece-Backend-README.md`
+pieces from Usenet on peer demand. Use `../Usenet-Piece-Backend-README.md`
 for current operator-facing configuration and limits.
 
 Known follow-up work: cross-file piece eviction, full size-pressure/LRU policy,

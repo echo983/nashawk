@@ -1,6 +1,11 @@
 # Usenet Backend Test Status - 2026-07-11
 
-Status: current field-test report for `feature/usenet-nyuu-batch-upload`.
+Status: Archived field-test report.
+
+This report records the July 2026 field-test state that informed the current
+Usenet backend. It is retained for historical diagnostics; current
+operator-facing behavior is documented in
+`../Usenet-Piece-Backend-README.md`.
 
 ## Environment
 

@@ -28,6 +28,12 @@ through nvm when available, points `TRANSMISSION_WEB_HOME` at
 `web/public_html`, and starts the built daemon in the foreground. Press
 `Ctrl-C` to stop it.
 
+The Web UI is served at:
+
+```text
+http://127.0.0.1:19091/transmission/web/
+```
+
 Default test paths and settings:
 
 ```text
@@ -39,6 +45,7 @@ Log: /tmp/nashawk-webui-real/daemon.log
 Usenet article size check: 3900000 bytes
 Usenet upload concurrency: 40
 Usenet discovery: enabled
+Usenet discovery sample size: 16
 Usenet eviction: enabled
 Usenet cache size: 0 MiB
 ```

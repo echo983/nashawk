@@ -1,6 +1,10 @@
 # Nashawk Usenet Web UI Plan
 
-Status: Active design plan
+Status: Archived.
+
+The first read-only Usenet Web UI and RPC observability pass has been
+implemented and merged into `main`. Current operator-facing behavior is
+documented in `../Usenet-Piece-Backend-README.md`.
 
 ## Goal
 

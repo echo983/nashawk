@@ -16,7 +16,7 @@ validated with local two-daemon BitTorrent tests and real Usenet upload/read
 paths.
 
 Current field-test details are recorded in
-`docs/Usenet-Backend-Test-Status-2026-07-11.md`, including the Node/Nyuu ABI
+`archive/Usenet-Backend-Test-Status-2026-07-11.md`, including the Node/Nyuu ABI
 issue found during testing, real torrent upload results, local piece eviction,
 and Usenet readback validation.
 
@@ -34,6 +34,8 @@ Validated paths:
   coalesced instead of uploaded repeatedly
 - automatic local piece eviction for Usenet-available pieces
 - peer-triggered restore of evicted local pieces from Usenet
+- read-only Web UI and RPC observability for daemon and torrent Usenet state
+- sampled Usenet piece discovery after magnet metadata is available
 
 Current limits:
 
@@ -49,6 +51,9 @@ Current limits:
 - `usenet_cache_size_mib` is present, but the current implemented eviction pass
   is conservative and age-driven; full size-pressure/LRU policy remains future
   work.
+- Discovery runs once for a fresh manifest that does not already contain
+  meaningful Usenet piece state. Automatic rediscovery or manual reset controls
+  are future work.
 - End-to-end Usenet tests are currently manual, not CI automation.
 - Windows startup support for this mode is not implemented.
 
@@ -171,6 +176,8 @@ The equivalent settings keys are:
   "usenet_cache_size_mib": 0,
   "usenet_eviction_enabled": false,
   "usenet_eviction_min_age_minutes": 60,
+  "usenet_discovery_enabled": true,
+  "usenet_discovery_sample_size": 16,
   "usenet_upload_concurrency": 40
 }
 ```
@@ -189,6 +196,19 @@ transmission-daemon --usenet-enabled \
 When `usenet_eviction_enabled` is true, age-based eviction may still remove
 pieces that are already marked available in the Usenet manifest and have reached
 `usenet_eviction_min_age_minutes`.
+
+Usenet discovery is enabled by default when Usenet mode is enabled. It can be
+disabled explicitly:
+
+```sh
+transmission-daemon --usenet-enabled --no-usenet-discovery
+```
+
+The default discovery sample size is 16 pieces:
+
+```sh
+transmission-daemon --usenet-enabled --usenet-discovery-sample-size 16
+```
 
 ## Startup Validation
 
@@ -244,6 +264,67 @@ When a peer requests a piece:
 7. Later peer retries are served from local disk.
 
 If fetch, decode, write, or hash verification fails, the piece is not served.
+
+## Usenet Piece Discovery
+
+Discovery helps a node use Usenet data that another Nashawk node has already
+uploaded for the same torrent.
+
+After magnet metadata or torrent metainfo is available, Nashawk creates or
+loads the torrent's Usenet manifest. If the manifest has no meaningful existing
+piece state and discovery is enabled, Nashawk selects a deterministic bounded
+sample of piece indexes and sends NNTP `STAT <message-id>` checks for the
+corresponding deterministic piece Message-IDs.
+
+Outcomes:
+
+- if every sampled article exists, all pieces in the manifest are marked
+  `available`, and the torrent becomes Usenet-serviceable without waiting for a
+  normal full BitTorrent download;
+- if any sampled article is missing, discovery records `missing` and the torrent
+  continues through normal BitTorrent download/upload behavior;
+- if the query errors, discovery records `error` for diagnostics and leaves
+  normal BitTorrent behavior intact.
+
+Discovery is a fast path, not a correctness dependency. Every Usenet restore
+still yEnc-decodes the article and verifies the BitTorrent piece hash before the
+data is served.
+
+The manifest records discovery metadata:
+
+```json
+{
+  "discovery": {
+    "status": "available",
+    "checked_at": 1783814490,
+    "sample_size": 16,
+    "sampled_pieces": [0, 9, 14]
+  }
+}
+```
+
+Discovery IO shares the same Usenet IO limit as upload and download work.
+
+## Web UI And RPC Observability
+
+The Web UI exposes a read-only Usenet status surface without exposing secrets.
+
+Session-level state is shown in the Statistics dialog and includes:
+
+- whether Usenet mode and eviction are enabled;
+- configured Usenet IO limit and current active IO;
+- upload/download queue sizes and in-flight download count;
+- discovery settings.
+
+Torrent-level state is shown in the torrent row and Inspector info tab. The UI
+distinguishes local completion from Usenet-backed serviceability, including
+cases where local pieces have been evicted but the torrent remains servable
+through Usenet.
+
+The browser can emit stable diagnostic console messages with the
+`[nashawk-usenet]` prefix when the local debug option is enabled. RPC and Web UI
+diagnostics intentionally exclude Usenet host, port, username, password, group,
+and `.env` contents.
 
 ## Deleting Local Data
 
@@ -365,6 +446,10 @@ fetch; once the piece is restored, peer retries can be served.
 
 ## Related Documents
 
-- [Usenet Piece Backend Design](./Usenet-Piece-Backend.md)
-- [Usenet Piece Backend Implementation Plan](./Usenet-Piece-Backend-Plan.md)
-- [Usenet Local Piece Eviction Plan](./Usenet-Local-Piece-Eviction-Plan.md)
+- [Archived Usenet Piece Backend Design](./archive/Usenet-Piece-Backend.md)
+- [Archived Usenet Piece Backend Implementation Plan](./archive/Usenet-Piece-Backend-Plan.md)
+- [Archived Usenet Local Piece Eviction Plan](./archive/Usenet-Local-Piece-Eviction-Plan.md)
+- [Archived Usenet Nyuu Batch Upload Plan](./archive/Usenet-Nyuu-Batch-Upload-Plan.md)
+- [Archived Usenet Web UI Plan](./archive/Usenet-Web-UI-Plan.md)
+- [Archived Usenet Piece Discovery Plan](./archive/Usenet-Piece-Discovery-Plan.md)
+- [Archived Usenet Backend Test Status](./archive/Usenet-Backend-Test-Status-2026-07-11.md)

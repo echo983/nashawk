@@ -1,6 +1,10 @@
 # Usenet Piece Discovery Plan
 
-Status: initial design for `feature/usenet-piece-discovery`.
+Status: Archived.
+
+The sampled Usenet piece discovery feature has been implemented and merged into
+`main`. Current operator-facing behavior is documented in
+`../Usenet-Piece-Backend-README.md`.
 
 ## Goal
 

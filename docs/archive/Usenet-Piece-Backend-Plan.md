@@ -5,12 +5,12 @@ Status: Archived.
 This plan has been completed for the first usable implementation cut, including
 startup validation, piece manifests, upload, read/restore, peer-facing
 availability, shared Usenet IO limiting, and local piece eviction. Use
-`docs/Usenet-Piece-Backend-README.md` for current behavior and operations.
+`../Usenet-Piece-Backend-README.md` for current behavior and operations.
 
 Remaining items such as automated end-to-end CI, deeper sampling policy,
 Windows support, and a full size-pressure/LRU cache policy are follow-up work.
 
-This plan breaks the Usenet piece backend into small milestones. The design constraints are documented in `docs/Usenet-Piece-Backend.md`.
+This plan breaks the Usenet piece backend into small milestones. The design constraints are documented in `Usenet-Piece-Backend.md`.
 
 ## Guiding Constraints
 

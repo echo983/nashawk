@@ -1,6 +1,9 @@
 # Usenet Nyuu Batch Upload Plan
 
-Status: active design/implementation plan.
+Status: Archived.
+
+This plan has been implemented and merged into `main`. Current operator-facing
+behavior is documented in `../Usenet-Piece-Backend-README.md`.
 
 ## Problem
 
