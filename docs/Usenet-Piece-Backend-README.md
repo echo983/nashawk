@@ -485,8 +485,8 @@ fetch; once the piece is restored, peer retries can be served.
 
 ## Related Documents
 
-- [Active Usenet Multipart Piece Design](./Usenet-Multipart-Piece-Design.md)
-- [Active Usenet Multipart Piece Implementation Plan](./Usenet-Multipart-Piece-Implementation-Plan.md)
+- [Archived Usenet Multipart Piece Design](./archive/Usenet-Multipart-Piece-Design.md)
+- [Archived Usenet Multipart Piece Implementation Plan](./archive/Usenet-Multipart-Piece-Implementation-Plan.md)
 - [Archived Usenet Piece Backend Design](./archive/Usenet-Piece-Backend.md)
 - [Archived Usenet Piece Backend Implementation Plan](./archive/Usenet-Piece-Backend-Plan.md)
 - [Archived Usenet Local Piece Eviction Plan](./archive/Usenet-Local-Piece-Eviction-Plan.md)

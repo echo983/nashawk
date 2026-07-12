@@ -1,6 +1,6 @@
 # Usenet Multipart Piece Design
 
-Status: Proposed.
+Status: Implemented on `feature/usenet-multipart-pieces`.
 
 Implementation plan: [Usenet Multipart Piece Implementation Plan](Usenet-Multipart-Piece-Implementation-Plan.md)
 

@@ -1,6 +1,6 @@
 # Usenet Multipart Piece Implementation Plan
 
-Status: Active.
+Status: Implemented and verified on 2026-07-13.
 
 Design authority: [Usenet Multipart Piece Design](Usenet-Multipart-Piece-Design.md)
 
