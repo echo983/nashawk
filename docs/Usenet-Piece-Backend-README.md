@@ -349,7 +349,7 @@ For compatibility testing, Nashawk defaults to exposing Transmission
 - peer ID prefix: `-TR4120-`
 - peer extension handshake client string: `Transmission 4.1.2`
 - HTTP User-Agent: `Transmission/4.1.2`
-- RPC/session version: `4.1.2 (00000000)`
+- RPC/session version: `4.1.2 (f234716f3e)`
 
 This does not change the internal build or codebase. To expose the real Nashawk
 development version instead, start the daemon with:

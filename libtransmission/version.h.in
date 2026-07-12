@@ -16,7 +16,7 @@
 #define PATCH_VERSION             ${TR_VERSION_PATCH}
 
 #define COMPAT_VERSION_STRING              "4.1.2"
-#define COMPAT_LONG_VERSION_STRING         "4.1.2 (00000000)"
+#define COMPAT_LONG_VERSION_STRING         "4.1.2 (f234716f3e)"
 #define COMPAT_CLIENT_NAME                 "Transmission"
 #define COMPAT_USERAGENT_PREFIX            "4.1.2"
 #define COMPAT_PEERID_PREFIX               "-TR4120-"
