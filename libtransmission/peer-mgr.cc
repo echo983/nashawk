@@ -508,7 +508,7 @@ public:
 
     [[nodiscard]] uint16_t count_active_webseeds(uint64_t now) const noexcept
     {
-        if (!tor->is_running() || tor->is_done())
+        if (!tor->is_running() || tor->is_serving_complete())
         {
             return {};
         }
@@ -1214,7 +1214,7 @@ void tr_peerMgrFree(tr_peerMgr* manager)
 
 std::vector<tr_block_span_t> tr_peerMgrGetNextRequests(tr_torrent* torrent, tr_peer const* peer, size_t numwant)
 {
-    TR_ASSERT(!torrent->is_done());
+    TR_ASSERT(!torrent->is_serving_complete());
 
     if (auto& controller = torrent->swarm->wishlist_controller)
     {
@@ -1451,7 +1451,7 @@ namespace get_peers_helpers
         return false;
     }
 
-    if (tor->is_done() && info.is_upload_only())
+    if (tor->is_serving_complete() && info.is_upload_only())
     {
         return false;
     }
@@ -1619,7 +1619,7 @@ uint64_t tr_peerMgrGetDesiredAvailable(tr_torrent const* tor)
 
     // common shortcuts...
 
-    if (!tor->is_running() || tor->is_stopping() || tor->is_done() || !tor->has_metainfo())
+    if (!tor->is_running() || tor->is_stopping() || tor->is_serving_complete() || !tor->has_metainfo())
     {
         return 0;
     }
@@ -1826,7 +1826,7 @@ void updateInterest(tr_swarm* swarm)
 {
     // sometimes this function isn't necessary
     auto const* const tor = swarm->tor;
-    if (tor->is_done() || !tor->client_can_download())
+    if (tor->is_serving_complete() || !tor->client_can_download())
     {
         return;
     }
@@ -1902,7 +1902,7 @@ struct ChokeData
 /* get a rate for deciding which peers to choke and unchoke. */
 [[nodiscard]] auto get_rate(tr_torrent const* tor, tr_peer const* peer, uint64_t now)
 {
-    if (tor->is_done())
+    if (tor->is_serving_complete())
     {
         return peer->get_piece_speed(now, tr_direction::ClientToPeer);
     }
@@ -2090,7 +2090,7 @@ auto constexpr MaxUploadIdleSecs = time_t{ 60 * 5 };
     auto const& info = peer->peer_info;
 
     /* disconnect if we're both seeds or partial seeds and enough time has passed for PEX */
-    if (tor->is_done() && info->is_upload_only())
+    if (tor->is_serving_complete() && info->is_upload_only())
     {
         return !tor->allows_pex() || info->idle_secs(now).value_or(0U) >= 30U;
     }
@@ -2143,7 +2143,7 @@ constexpr struct
             return -val;
         }
 
-        return tr_compare_3way(a->swarm->tor->is_done(), b->swarm->tor->is_done());
+        return tr_compare_3way(a->swarm->tor->is_serving_complete(), b->swarm->tor->is_serving_complete());
     }
 
     [[nodiscard]] bool operator()(std::shared_ptr<tr_peerMsgs> const& a, std::shared_ptr<tr_peerMsgs> const& b)
@@ -2281,7 +2281,7 @@ namespace peer_info_pulse_helpers
 {
 auto get_max_peer_info_count(tr_torrent const& tor)
 {
-    return tor.is_done() ? tor.peer_limit() : tor.peer_limit() * 3U;
+    return tor.is_serving_complete() ? tor.peer_limit() : tor.peer_limit() * 3U;
 }
 
 struct ComparePeerInfo
@@ -2409,7 +2409,7 @@ namespace connect_helpers
 [[nodiscard]] bool is_peer_candidate(tr_torrent const* tor, tr_peer_info const& peer_info, time_t const now)
 {
     // not if we're both upload only and pex is disabled
-    if (tor->is_done() && peer_info.is_upload_only() && !tor->allows_pex())
+    if (tor->is_serving_complete() && peer_info.is_upload_only() && !tor->allows_pex())
     {
         return false;
     }
@@ -2489,7 +2489,7 @@ namespace connect_helpers
     score = addValToKey(score, 1U, i);
 
     /* prefer torrents we're downloading with */
-    i = tor->is_done() ? 1 : 0;
+    i = tor->is_serving_complete() ? 1 : 0;
     score = addValToKey(score, 1U, i);
 
     /* prefer peers that are known to be connectible */
@@ -2556,7 +2556,7 @@ void get_peer_candidates(size_t global_peer_limit, tr_torrents& torrents, tr_pee
 
         /* if everyone in the swarm is upload only and pex is disabled,
          * then don't initiate connections */
-        bool const seeding = tor->is_done();
+        bool const seeding = tor->is_serving_complete();
         if (seeding && swarm->is_all_upload_only() && !tor->allows_pex())
         {
             continue;
@@ -2607,7 +2607,7 @@ void initiate_connection(tr_peerMgr* mgr, tr_swarm* s, tr_peer_info& peer_info)
     auto const peer_supports_utp = peer_info.supports_utp().value_or(true);
 
     // Allow downloading torrents to "steal" connection slots
-    if (tr_peer_socket::limit_reached(session) && s->tor->is_done())
+    if (tr_peer_socket::limit_reached(session) && s->tor->is_serving_complete())
     {
         return;
     }
@@ -2617,7 +2617,7 @@ void initiate_connection(tr_peerMgr* mgr, tr_swarm* s, tr_peer_info& peer_info)
         &session->top_bandwidth_,
         peer_info.listen_socket_address(),
         s->tor->info_hash(),
-        s->tor->is_seed(),
+        s->tor->is_serving_complete(),
         peer_supports_utp);
 
     if (!peer_io)

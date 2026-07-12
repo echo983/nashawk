@@ -89,7 +89,10 @@ Important concepts:
   is available
 
 Peer bitfields use servable availability. Torrent progress and local verify
-still use local completion.
+still use local completion. If every piece is servable through local data or
+Usenet, the torrent is treated as seed-like for activity, queue direction, and
+peer upload-only behavior, but local completion, verification, and tracker
+completion semantics remain unchanged.
 
 The Usenet manifest is stored under:
 
@@ -320,6 +323,10 @@ Torrent-level state is shown in the torrent row and Inspector info tab. The UI
 distinguishes local completion from Usenet-backed serviceability, including
 cases where local pieces have been evicted but the torrent remains servable
 through Usenet.
+
+A torrent whose pieces are fully servable from Usenet can appear in the seeding
+activity state even when local progress is below 100%. The Usenet badges and
+Inspector summary show whether that state is local, mixed, or Usenet-backed.
 
 The browser can emit stable diagnostic console messages with the
 `[nashawk-usenet]` prefix when the local debug option is enabled. RPC and Web UI
