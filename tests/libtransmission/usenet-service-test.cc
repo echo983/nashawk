@@ -108,6 +108,35 @@ TEST(UsenetServiceTest, rejectsMissingEmptyOverflowAndHashMismatch)
     EXPECT_TRUE(std::empty(result.data));
 }
 
+TEST(UsenetServiceTest, rejectsMissingBaseAndCorruptMiddleArticle)
+{
+    auto fixture = ChainFixture{};
+    auto result = tr_usenet_download_result{};
+
+    auto error = tr_usenet_assemble_piece_chain(BaseMessageId, 1U, {}, fixture.fetch(), result);
+    ASSERT_TRUE(error);
+    EXPECT_NE(std::string::npos, error->find("article 0"));
+    EXPECT_TRUE(std::empty(result.data));
+    EXPECT_EQ((std::vector<std::string>{ BaseMessageId }), fixture.requested);
+
+    auto const expected = std::vector<uint8_t>{ 1U, 2U, 3U, 4U, 5U, 6U };
+    fixture = {};
+    fixture.articles[BaseMessageId] = { 1U, 2U };
+    fixture.articles[std::string(40U, 'a') + ".1@nashawk.local"] = { 9U, 9U };
+    fixture.articles[std::string(40U, 'a') + ".2@nashawk.local"] = { 5U, 6U };
+
+    error = tr_usenet_assemble_piece_chain(
+        BaseMessageId,
+        std::size(expected),
+        tr_sha1::digest(expected),
+        fixture.fetch(),
+        result);
+    ASSERT_TRUE(error);
+    EXPECT_NE(std::string::npos, error->find("hash"));
+    EXPECT_TRUE(std::empty(result.data));
+    EXPECT_EQ(0U, result.article_count);
+}
+
 TEST(UsenetServiceTest, enforcesArticleSafetyBound)
 {
     auto fixture = ChainFixture{};

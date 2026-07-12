@@ -386,7 +386,8 @@ TEST_F(UsenetPieceStoreTest, resetInterruptedUploads)
     auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
     ASSERT_FALSE(store.ensure_torrent(metainfo));
 
-    ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 0, tr_usenet_piece_state::Uploading));
+    ASSERT_FALSE(
+        store.set_piece_state(metainfo.info_hash_string(), 0, tr_usenet_piece_state::Uploading, 2U, 2U * 1024U * 1024U));
     ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 1, tr_usenet_piece_state::Available));
     ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 2, tr_usenet_piece_state::Failed));
     ASSERT_FALSE(store.set_piece_state(metainfo.info_hash_string(), 3, tr_usenet_piece_state::Uploading));
@@ -398,6 +399,8 @@ TEST_F(UsenetPieceStoreTest, resetInterruptedUploads)
     auto loaded = store.load(metainfo.info_hash_string());
     ASSERT_TRUE(loaded);
     EXPECT_EQ(tr_usenet_piece_state::Unknown, loaded->pieces[0].state);
+    EXPECT_EQ(0U, loaded->pieces[0].article_count);
+    EXPECT_EQ(0U, loaded->pieces[0].article_payload_size);
     EXPECT_EQ(tr_usenet_piece_state::Available, loaded->pieces[1].state);
     EXPECT_EQ(tr_usenet_piece_state::Failed, loaded->pieces[2].state);
     EXPECT_EQ(tr_usenet_piece_state::Unknown, loaded->pieces[3].state);

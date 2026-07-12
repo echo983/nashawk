@@ -59,6 +59,20 @@ multiple suffixes, mapping both `hash.piece` and `hash.1.piece` to `hash`. The
 implementation now stages extensionless `hash`/`hash.1` files and uses
 `{filename}`, preserving deterministic continuation IDs.
 
+Fault and concurrency validation completed on 2026-07-13:
+
+- deterministic chain tests reject a missing base, missing continuation, empty
+  part, decoded overflow, a same-length corrupt middle part, final hash
+  mismatch, and chains beyond 1024 articles; every failure returns an empty
+  result;
+- interrupted multipart uploads reset to `unknown`, clear chain metadata, and
+  are returned as complete logical pieces for requeue;
+- a provider run with one multipart upload and one multipart discovery used a
+  shared IO limit of 2; 80 RPC samples observed a maximum active count of 2 and
+  no oversubscription;
+- full `ctest` ran 615 enabled tests successfully; 11 upstream tests remained
+  disabled, and both deployment/test shell scripts passed `bash -n`.
+
 ## Commit 1: Multipart Format Helpers
 
 ### Production changes
