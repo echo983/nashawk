@@ -1925,13 +1925,15 @@ ReadResult tr_peerMsgsImpl::can_read_impl(tr_peerIo* io)
     // with `process_peer_message()`, reset the peerMsgs' incoming
     // field so it's ready to receive the next message.
 
-    auto const ret = process_peer_message(*current_message_type, current_payload);
-
+    auto const message_type = *current_message_type;
+    auto payload = MessageBuffer{ std::span{ current_payload.data(), current_payload.size() } };
     current_message_len.reset();
     current_message_type.reset();
     current_payload.clear();
 
-    return ret;
+    // Processing piece data can stop the torrent on an IO error and destroy
+    // this peerMsgs instance. Do not access members after dispatch.
+    return process_peer_message(message_type, payload);
 }
 
 ReadState tr_peerMsgsImpl::can_read(tr_peerIo* io, void* vmsgs, size_t* piece)
@@ -1945,6 +1947,12 @@ ReadState tr_peerMsgsImpl::can_read(tr_peerIo* io, void* vmsgs, size_t* piece)
         auto const [read_state, n_piece_bytes_read] = msgs->can_read_impl(io);
         ret = read_state;
         *piece += n_piece_bytes_read;
+        if (ret == ReadState::Err)
+        {
+            // can_read_impl() may have destroyed msgs while handling an IO
+            // failure, so return without dereferencing it again.
+            return ret;
+        }
     }
 
     // If we received piece data, then we might have quota to request new blocks
