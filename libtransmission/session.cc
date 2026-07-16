@@ -3592,6 +3592,17 @@ void tr_session::usenetUploadWorker()
                 success,
                 std::move(error));
         };
+        auto verify_task = [this](UsenetUploadTask const& task) -> std::optional<std::string>
+        {
+            if (!acquireUsenetIoSlot())
+            {
+                return "upload readback skipped because Usenet IO is stopping";
+            }
+
+            auto error = verify_usenet_upload_after_error(config_dir_, task.message_id, task.temp_file, task.piece_size);
+            releaseUsenetIoSlot();
+            return error;
+        };
 
         auto batch_dir = std::string{};
         if (auto dir_error = make_usenet_batch_temp_dir(config_dir_, batch_dir); dir_error)
@@ -3679,7 +3690,17 @@ void tr_session::usenetUploadWorker()
                     connection_count));
             for (auto& task : batch)
             {
-                finish_task(std::move(task), true, {});
+                if (auto readback_error = verify_task(task); readback_error)
+                {
+                    finish_task(
+                        std::move(task),
+                        false,
+                        fmt::format("upload completed but mandatory readback failed: {}", *readback_error));
+                }
+                else
+                {
+                    finish_task(std::move(task), true, {});
+                }
             }
             continue;
         }
@@ -3734,9 +3755,16 @@ void tr_session::usenetUploadWorker()
 
                 if (!single_upload_error)
                 {
-                    ++single_retry_success_count;
-                    finish_task(std::move(task), true, {});
-                    continue;
+                    if (auto readback_error = verify_task(task); readback_error)
+                    {
+                        single_upload_error = fmt::format("mandatory readback failed: {}", *readback_error);
+                    }
+                    else
+                    {
+                        ++single_retry_success_count;
+                        finish_task(std::move(task), true, {});
+                        continue;
+                    }
                 }
             }
 
@@ -3901,6 +3929,13 @@ void tr_session::onUsenetPieceUploadFinished(
             state,
             success ? std::optional<size_t>{ article_count } : std::nullopt,
             success ? std::optional<uint64_t>{ article_payload_size } : std::nullopt);
+        if (!store_error && success)
+        {
+            store_error = usenet_piece_store_->mark_message_id_verified(
+                info_hash_string,
+                message_id,
+                static_cast<uint64_t>(tr_time()));
+        }
     }
 
     if (store_error)
