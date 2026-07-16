@@ -54,6 +54,16 @@ enum class tr_usenet_discovery_state : uint8_t
     Error,
 };
 
+enum class tr_usenet_integrity_state : uint8_t
+{
+    NotChecked,
+    Checking,
+    Repairing,
+    Ready,
+    Incomplete,
+    Error,
+};
+
 struct tr_usenet_piece_entry
 {
     tr_usenet_piece_state state = tr_usenet_piece_state::Unknown;
@@ -74,6 +84,19 @@ struct tr_usenet_discovery_info
     std::string error;
 };
 
+struct tr_usenet_integrity_info
+{
+    tr_usenet_integrity_state state = tr_usenet_integrity_state::NotChecked;
+    uint64_t started_at = 0U;
+    uint64_t finished_at = 0U;
+    size_t checked = 0U;
+    size_t verified = 0U;
+    size_t missing = 0U;
+    size_t repairing = 0U;
+    size_t waiting_for_peers = 0U;
+    std::string error;
+};
+
 struct tr_usenet_piece_manifest
 {
     uint32_t version = TrUsenetPieceManifestVersion;
@@ -81,6 +104,7 @@ struct tr_usenet_piece_manifest
     uint64_t piece_size = 0U;
     uint64_t max_article_size = 0U;
     tr_usenet_discovery_info discovery;
+    tr_usenet_integrity_info integrity;
     std::vector<tr_usenet_piece_entry> pieces;
 
     [[nodiscard]] size_t piece_count() const noexcept;
@@ -154,6 +178,8 @@ private:
 [[nodiscard]] std::optional<tr_usenet_piece_state> tr_usenet_piece_state_from_name(std::string_view name) noexcept;
 [[nodiscard]] std::string_view tr_usenet_discovery_state_name(tr_usenet_discovery_state state) noexcept;
 [[nodiscard]] std::optional<tr_usenet_discovery_state> tr_usenet_discovery_state_from_name(std::string_view name) noexcept;
+[[nodiscard]] std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state state) noexcept;
+[[nodiscard]] std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view name) noexcept;
 [[nodiscard]] std::vector<tr_piece_index_t> tr_usenet_discovery_sample_pieces(
     std::string_view info_hash_string,
     tr_piece_index_t piece_count,

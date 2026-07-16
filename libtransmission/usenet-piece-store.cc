@@ -69,6 +69,46 @@ auto constexpr Domain = "nashawk.local"sv;
     return tr_quark_new("error"sv);
 }
 
+[[nodiscard]] tr_quark key_integrity()
+{
+    return tr_quark_new("integrity"sv);
+}
+
+[[nodiscard]] tr_quark key_started_at()
+{
+    return tr_quark_new("started_at"sv);
+}
+
+[[nodiscard]] tr_quark key_finished_at()
+{
+    return tr_quark_new("finished_at"sv);
+}
+
+[[nodiscard]] tr_quark key_checked()
+{
+    return tr_quark_new("checked"sv);
+}
+
+[[nodiscard]] tr_quark key_verified()
+{
+    return tr_quark_new("verified"sv);
+}
+
+[[nodiscard]] tr_quark key_missing()
+{
+    return tr_quark_new("missing"sv);
+}
+
+[[nodiscard]] tr_quark key_repairing()
+{
+    return tr_quark_new("repairing"sv);
+}
+
+[[nodiscard]] tr_quark key_waiting_for_peers()
+{
+    return tr_quark_new("waiting_for_peers"sv);
+}
+
 [[nodiscard]] tr_quark key_max_article_size()
 {
     return tr_quark_new("max_article_size"sv);
@@ -130,6 +170,23 @@ auto constexpr Domain = "nashawk.local"sv;
     }
     discovery.try_emplace(key_sampled_pieces(), std::move(sampled_pieces));
     top.try_emplace(key_discovery(), std::move(discovery));
+
+    auto integrity = tr_variant::Map{ 9U };
+    integrity.try_emplace(
+        TR_KEY_status,
+        tr_variant::unmanaged_string(tr_usenet_integrity_state_name(manifest.integrity.state)));
+    integrity.try_emplace(key_started_at(), static_cast<int64_t>(manifest.integrity.started_at));
+    integrity.try_emplace(key_finished_at(), static_cast<int64_t>(manifest.integrity.finished_at));
+    integrity.try_emplace(key_checked(), static_cast<int64_t>(manifest.integrity.checked));
+    integrity.try_emplace(key_verified(), static_cast<int64_t>(manifest.integrity.verified));
+    integrity.try_emplace(key_missing(), static_cast<int64_t>(manifest.integrity.missing));
+    integrity.try_emplace(key_repairing(), static_cast<int64_t>(manifest.integrity.repairing));
+    integrity.try_emplace(key_waiting_for_peers(), static_cast<int64_t>(manifest.integrity.waiting_for_peers));
+    if (!std::empty(manifest.integrity.error))
+    {
+        integrity.try_emplace(key_error(), manifest.integrity.error);
+    }
+    top.try_emplace(key_integrity(), std::move(integrity));
 
     auto pieces = tr_variant::Vector{};
     pieces.reserve(std::size(manifest.pieces));
@@ -251,6 +308,58 @@ auto constexpr Domain = "nashawk.local"sv;
                     return {};
                 }
             }
+        }
+    }
+
+    if (auto const* integrity = top->find_if<tr_variant::Map>(key_integrity()); integrity != nullptr)
+    {
+        if (auto const status = integrity->value_if<std::string_view>(TR_KEY_status); status)
+        {
+            auto const state = tr_usenet_integrity_state_from_name(*status);
+            if (!state)
+            {
+                return {};
+            }
+            manifest.integrity.state = *state;
+        }
+
+        auto read_count = [integrity](tr_quark const key, size_t& setme) -> bool
+        {
+            if (auto const value = integrity->value_if<int64_t>(key); value)
+            {
+                if (*value < 0)
+                {
+                    return false;
+                }
+                setme = static_cast<size_t>(*value);
+            }
+            return true;
+        };
+        auto read_time = [integrity](tr_quark const key, uint64_t& setme) -> bool
+        {
+            if (auto const value = integrity->value_if<int64_t>(key); value)
+            {
+                if (*value < 0)
+                {
+                    return false;
+                }
+                setme = static_cast<uint64_t>(*value);
+            }
+            return true;
+        };
+        if (!read_time(key_started_at(), manifest.integrity.started_at) ||
+            !read_time(key_finished_at(), manifest.integrity.finished_at) ||
+            !read_count(key_checked(), manifest.integrity.checked) ||
+            !read_count(key_verified(), manifest.integrity.verified) ||
+            !read_count(key_missing(), manifest.integrity.missing) ||
+            !read_count(key_repairing(), manifest.integrity.repairing) ||
+            !read_count(key_waiting_for_peers(), manifest.integrity.waiting_for_peers))
+        {
+            return {};
+        }
+        if (auto const error = integrity->value_if<std::string_view>(key_error()); error)
+        {
+            manifest.integrity.error = *error;
         }
     }
 
@@ -487,6 +596,45 @@ std::optional<tr_usenet_discovery_state> tr_usenet_discovery_state_from_name(std
     if (name == "error"sv)
     {
         return tr_usenet_discovery_state::Error;
+    }
+
+    return {};
+}
+
+std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state const state) noexcept
+{
+    switch (state)
+    {
+    case tr_usenet_integrity_state::NotChecked:
+        return "not_checked"sv;
+    case tr_usenet_integrity_state::Checking:
+        return "checking"sv;
+    case tr_usenet_integrity_state::Repairing:
+        return "repairing"sv;
+    case tr_usenet_integrity_state::Ready:
+        return "ready"sv;
+    case tr_usenet_integrity_state::Incomplete:
+        return "incomplete"sv;
+    case tr_usenet_integrity_state::Error:
+        return "error"sv;
+    }
+
+    return "error"sv;
+}
+
+std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view const name) noexcept
+{
+    for (auto const state : { tr_usenet_integrity_state::NotChecked,
+                              tr_usenet_integrity_state::Checking,
+                              tr_usenet_integrity_state::Repairing,
+                              tr_usenet_integrity_state::Ready,
+                              tr_usenet_integrity_state::Incomplete,
+                              tr_usenet_integrity_state::Error })
+    {
+        if (name == tr_usenet_integrity_state_name(state))
+        {
+            return state;
+        }
     }
 
     return {};

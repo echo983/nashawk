@@ -1,6 +1,19 @@
 # Usenet Piece Integrity And Repair Plan
 
-Status: In progress on `fix/usenet-piece-integrity-repair`.
+Status: Initial implementation complete on `fix/usenet-piece-integrity-repair`.
+
+Implemented so far:
+
+- manifest v3 `verified_at` credentials and backward-compatible loading;
+- eviction restricted to independently verified remote pieces;
+- mandatory complete readback after every successful Nyuu upload;
+- persistent torrent-level integrity states and counters;
+- bounded background full-piece audit using the shared Usenet IO limiter;
+- failed-piece withdrawal, local reupload, and BitTorrent reacquisition state;
+- automatic first audit and manual `torrent_usenet_verify` RPC action;
+- Web UI context action, Inspector diagnostics, and Ready label gating.
+- restart recovery for interrupted uploads, audits, and locally repairable
+  pieces.
 
 ## Objective
 
@@ -46,23 +59,21 @@ only local copy.
 
 ## Persistent Model
 
-Upgrade the manifest format and add these fields to each piece entry:
+Manifest version 3 adds this field to each piece entry:
 
 - `verified_at`: time of the most recent complete remote readback and hash
   validation; zero means the piece is not eligible for eviction.
-- `verification_source`: `upload_readback`, `audit`, or `on_demand_read` for
-  diagnostics. This field does not change the strength of the credential.
-- `last_error`: concise non-secret failure information for repair and UI
-  diagnostics.
-
-Add a torrent-level integrity section:
+It also adds a torrent-level integrity section:
 
 - state: `not_checked`, `checking`, `repairing`, `ready`, `incomplete`, or
   `error`;
-- checked, verified, missing, corrupt, repairing, and waiting-for-peers counts;
+- checked, verified, missing, repairing, and waiting-for-peers counts;
 - start and finish timestamps;
-- a generation identifier so stale worker results cannot overwrite a newer
-  manual audit.
+- a concise non-secret error string.
+
+Verification source, separate corrupt counts, and audit generation identifiers
+remain possible diagnostics improvements; the first version does not persist
+them.
 
 Existing version 1 and 2 manifests remain readable. Their `available` entries
 retain optimistic serviceability for compatibility, but load with
@@ -133,6 +144,10 @@ of retaining a Ready label.
 - Record counters and non-secret errors in RPC and logs so failures can be
   diagnosed without credentials or article bodies.
 
+The first and last items are implemented. Stabilization delay, freshness-window
+readback, periodic audits, and retry backoff are intentionally deferred until
+real-provider behavior and load are measured.
+
 ## Delivery Order
 
 ### Phase 1: Stop Data Loss
@@ -174,6 +189,17 @@ of retaining a Ready label.
 - prove local data is retained before verification, local repair reuploads, and
   no-local repair returns to BitTorrent before becoming Ready;
 - update the backend README and archive this plan only after all gates pass.
+
+Current validation result:
+
+- the full enabled CTest suite passed: 619/619 tests, with 11 upstream-disabled
+  tests not run;
+- the Web UI production build and lint passed;
+- an isolated real-provider test migrated a historical version 2 manifest,
+  fetched and assembled a 4 MiB piece from two 2 MiB articles, matched its
+  BitTorrent SHA-1, persisted `verified_at`, and reached integrity `ready`;
+- the real-provider test daemon was stopped cleanly and no credentials or test
+  bodies were added to Git.
 
 ## Merge Gate
 

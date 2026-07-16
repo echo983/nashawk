@@ -96,6 +96,10 @@ export class ActionManager extends EventTarget {
         shortcut: 'V',
         text: 'Verify local data',
       },
+      'verify-selected-usenet': {
+        enabled: false,
+        text: 'Verify Usenet data',
+      },
     });
   }
 
@@ -209,6 +213,7 @@ export class ActionManager extends EventTarget {
       'show-move-dialog',
       'trash-selected-torrents',
       'verify-selected-torrents',
+      'verify-selected-usenet',
     ]);
 
     set_enabled(counts.selected === 1, ['show-rename-dialog']);

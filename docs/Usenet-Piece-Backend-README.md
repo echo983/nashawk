@@ -36,6 +36,9 @@ Validated paths:
 - peer-triggered restore of evicted local pieces from Usenet
 - read-only Web UI and RPC observability for daemon and torrent Usenet state
 - sampled Usenet piece discovery after magnet metadata is available
+- mandatory independent readback before an uploaded piece becomes evictable
+- full torrent-level Usenet integrity audits with repair and BitTorrent fallback
+- manual `Verify Usenet data` action in the Web UI torrent context menu
 
 Current limits:
 
@@ -111,8 +114,28 @@ Manifest states:
 - `available`: the piece is considered usable from Usenet
 - `failed`: recent upload, fetch, decode, or hash verification failed
 
+Manifest version 3 also records `verified_at` per piece. `available` means the
+piece may be attempted from Usenet, while a nonzero `verified_at` proves that a
+complete `BODY` chain was decoded to the exact metainfo size and matched the
+BitTorrent piece SHA-1. Only the latter is eligible for local eviction. Version
+1 and 2 manifests remain readable, but their historical availability has no
+trusted eviction credential until it is revalidated.
+
+The torrent-level integrity state is one of `not_checked`, `checking`,
+`repairing`, `ready`, `incomplete`, or `error`. A full audit reads and verifies
+every piece. A failed remote piece is withdrawn from peer-facing availability;
+if a verified local copy exists it is uploaded again, otherwise normal
+BitTorrent acquisition is allowed to recover it before upload. A torrent is
+shown as Usenet Ready only after every remote piece has a verification
+credential.
+
 On startup, interrupted `uploading` states are reset to `unknown`, and existing
 local verified pieces are scanned so they can be queued again.
+
+Interrupted integrity audits are reset to a retryable error. Existing torrents
+that appear completely Usenet-serviceable but have no full audit result are
+automatically queued for an audit. Operators can rerun the same audit at any
+time from the torrent context menu with `Verify Usenet data`.
 
 ## Configuration
 
