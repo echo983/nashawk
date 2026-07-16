@@ -49,6 +49,11 @@ auto constexpr Domain = "nashawk.local"sv;
     return tr_quark_new("last_local_at"sv);
 }
 
+[[nodiscard]] tr_quark key_verified_at()
+{
+    return tr_quark_new("verified_at"sv);
+}
+
 [[nodiscard]] tr_quark key_checked_at()
 {
     return tr_quark_new("checked_at"sv);
@@ -140,6 +145,10 @@ auto constexpr Domain = "nashawk.local"sv;
         if (piece.last_local_at != 0U)
         {
             entry.try_emplace(key_last_local_at(), static_cast<int64_t>(piece.last_local_at));
+        }
+        if (piece.verified_at != 0U)
+        {
+            entry.try_emplace(key_verified_at(), static_cast<int64_t>(piece.verified_at));
         }
         if (piece.article_count != 0U)
         {
@@ -280,6 +289,11 @@ auto constexpr Domain = "nashawk.local"sv;
         if (auto const last_local_at = entry->value_if<int64_t>(key_last_local_at()); last_local_at && *last_local_at > 0)
         {
             piece.last_local_at = static_cast<uint64_t>(*last_local_at);
+        }
+
+        if (auto const verified_at = entry->value_if<int64_t>(key_verified_at()); verified_at && *verified_at > 0)
+        {
+            piece.verified_at = static_cast<uint64_t>(*verified_at);
         }
 
         if (auto const article_count = entry->value_if<int64_t>(key_article_count()); article_count)
@@ -538,7 +552,8 @@ bool tr_usenet_piece_is_eviction_eligible(
     uint64_t const now_seconds,
     uint64_t const min_age_seconds) noexcept
 {
-    if (!has_local_piece || entry.state != tr_usenet_piece_state::Available || entry.available_at == 0U)
+    if (!has_local_piece || entry.state != tr_usenet_piece_state::Available || entry.available_at == 0U ||
+        entry.verified_at == 0U)
     {
         return false;
     }
@@ -608,6 +623,7 @@ void tr_usenet_piece_manifest::set_piece_state(
             }
             entry.article_count = 0U;
             entry.article_payload_size = 0U;
+            entry.verified_at = 0U;
         }
 
         if (state == tr_usenet_piece_state::Available && article_count)
@@ -640,6 +656,17 @@ void tr_usenet_piece_manifest::set_all_piece_states(tr_usenet_piece_state const 
     for (tr_piece_index_t piece = 0U; piece < std::size(pieces); ++piece)
     {
         set_piece_state(piece, state);
+    }
+}
+
+void tr_usenet_piece_manifest::mark_message_id_verified(std::string_view const message_id, uint64_t const verified_at)
+{
+    for (auto& piece : pieces)
+    {
+        if (piece.message_id == message_id && piece.state == tr_usenet_piece_state::Available)
+        {
+            piece.verified_at = verified_at;
+        }
     }
 }
 
@@ -775,6 +802,31 @@ std::optional<std::string> tr_usenet_piece_store::note_piece_local_activity(
     }
 
     manifest->pieces[piece].last_local_at = now_seconds();
+    if (!save(*manifest))
+    {
+        return "Could not save Usenet piece manifest";
+    }
+
+    return {};
+}
+
+std::optional<std::string> tr_usenet_piece_store::mark_message_id_verified(
+    std::string_view const info_hash_string,
+    std::string_view const message_id,
+    uint64_t const verified_at) const
+{
+    auto manifest = load(info_hash_string);
+    if (!manifest)
+    {
+        return "Usenet manifest is missing";
+    }
+
+    if (std::empty(message_id) || verified_at == 0U)
+    {
+        return "Usenet verification credential is invalid";
+    }
+
+    manifest->mark_message_id_verified(message_id, verified_at);
     if (!save(*manifest))
     {
         return "Could not save Usenet piece manifest";

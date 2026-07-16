@@ -17,7 +17,7 @@
 struct tr_torrent_metainfo;
 
 inline constexpr size_t TrUsenetMaxArticlesPerPiece = 1024U;
-inline constexpr uint32_t TrUsenetPieceManifestVersion = 2U;
+inline constexpr uint32_t TrUsenetPieceManifestVersion = 3U;
 
 struct tr_usenet_piece_part
 {
@@ -58,6 +58,7 @@ struct tr_usenet_piece_entry
 {
     tr_usenet_piece_state state = tr_usenet_piece_state::Unknown;
     uint64_t available_at = 0U;
+    uint64_t verified_at = 0U;
     uint64_t last_local_at = 0U;
     std::string message_id;
     size_t article_count = 0U;
@@ -99,6 +100,7 @@ struct tr_usenet_piece_manifest
         std::optional<size_t> article_count = {},
         std::optional<uint64_t> article_payload_size = {});
     void set_all_piece_states(tr_usenet_piece_state state);
+    void mark_message_id_verified(std::string_view message_id, uint64_t verified_at);
 };
 
 class tr_usenet_piece_store
@@ -128,6 +130,10 @@ public:
     [[nodiscard]] std::optional<std::string> note_piece_local_activity(
         std::string_view info_hash_string,
         tr_piece_index_t piece) const;
+    [[nodiscard]] std::optional<std::string> mark_message_id_verified(
+        std::string_view info_hash_string,
+        std::string_view message_id,
+        uint64_t verified_at) const;
     [[nodiscard]] std::optional<std::string> reset_interrupted_uploads(
         std::string_view info_hash_string,
         std::vector<tr_piece_index_t>& pieces) const;

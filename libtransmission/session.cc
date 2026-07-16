@@ -3269,6 +3269,11 @@ void tr_session::onUsenetDiscoveryFinished(UsenetDiscoveryResult result)
         if (result.state == tr_usenet_discovery_state::Available && !manifest->has_meaningful_state())
         {
             manifest->set_all_piece_states(tr_usenet_piece_state::Available);
+            auto const verified_at = static_cast<uint64_t>(tr_time());
+            for (auto const& sample : result.task.samples)
+            {
+                manifest->mark_message_id_verified(sample.message_id, verified_at);
+            }
         }
 
         if (!usenet_piece_store_->save(*manifest))
@@ -3471,6 +3476,10 @@ void tr_session::onUsenetPieceDownloaded(UsenetDownloadResult result)
             tr_usenet_piece_state::Available,
             result.article_count,
             0U);
+        (void)usenet_piece_store_->mark_message_id_verified(
+            result.task.info_hash_string,
+            result.task.message_id,
+            static_cast<uint64_t>(tr_time()));
     }
 
     tr_logAddTraceTor(tor, fmt::format("Usenet piece {} restored to local data", result.task.piece));

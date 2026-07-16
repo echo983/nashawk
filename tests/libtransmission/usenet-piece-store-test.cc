@@ -106,6 +106,7 @@ TEST_F(UsenetPieceStoreTest, evictionEligibilityRequiresAvailableLocalOldPiece)
     auto entry = tr_usenet_piece_entry{
         .state = tr_usenet_piece_state::Available,
         .available_at = 100U,
+        .verified_at = 100U,
         .last_local_at = 100U,
         .message_id = "piece@nashawk.local",
     };
@@ -114,6 +115,10 @@ TEST_F(UsenetPieceStoreTest, evictionEligibilityRequiresAvailableLocalOldPiece)
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, false, 200U, 60U));
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 120U, 60U));
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 99U, 60U));
+
+    entry.verified_at = 0U;
+    EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 200U, 60U));
+    entry.verified_at = 100U;
 
     entry.last_local_at = 180U;
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 200U, 60U));
@@ -163,6 +168,27 @@ TEST_F(UsenetPieceStoreTest, savesPieceState)
     EXPECT_TRUE(loaded->is_available(0));
     EXPECT_GT(loaded->pieces[0].available_at, 0U);
     EXPECT_GT(loaded->pieces[0].last_local_at, 0U);
+    EXPECT_EQ(0U, loaded->pieces[0].verified_at);
+}
+
+TEST_F(UsenetPieceStoreTest, verifiedCredentialRoundtripsAndAppliesToDuplicateMessageIds)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+
+    auto manifest = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(manifest);
+    ASSERT_GE(manifest->piece_count(), 2U);
+    manifest->pieces[1].message_id = manifest->pieces[0].message_id;
+    manifest->set_message_id_state(manifest->pieces[0].message_id, tr_usenet_piece_state::Available);
+    manifest->mark_message_id_verified(manifest->pieces[0].message_id, 12345U);
+    ASSERT_TRUE(store.save(*manifest));
+
+    auto loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(12345U, loaded->pieces[0].verified_at);
+    EXPECT_EQ(12345U, loaded->pieces[1].verified_at);
 }
 
 TEST_F(UsenetPieceStoreTest, discoveryMetadataRoundtrips)
@@ -330,6 +356,8 @@ TEST_F(UsenetPieceStoreTest, manifestVersionTwoNormalizesUnknownChainMetadata)
     ASSERT_EQ(1U, loaded->piece_count());
     EXPECT_EQ(0U, loaded->pieces[0].article_count);
     EXPECT_EQ(0U, loaded->pieces[0].article_payload_size);
+    EXPECT_EQ(0U, loaded->pieces[0].verified_at);
+    EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(loaded->pieces[0], true, 1000U, 0U));
 }
 
 TEST_F(UsenetPieceStoreTest, rejectsUnsupportedManifestVersionAndArticleCount)
@@ -342,7 +370,8 @@ TEST_F(UsenetPieceStoreTest, rejectsUnsupportedManifestVersionAndArticleCount)
     {
         auto file = std::ofstream{ path };
         file << fmt::format(
-            R"({{"version":3,"hash_string":"{}","piece_count":1,"piece_size":{},"pieces":[{{"status":"available","message_id":"{}"}}]}})",
+            R"({{"version":{},"hash_string":"{}","piece_count":1,"piece_size":{},"pieces":[{{"status":"available","message_id":"{}"}}]}})",
+            TrUsenetPieceManifestVersion + 1U,
             metainfo.info_hash_string(),
             metainfo.piece_size(),
             message_id);
