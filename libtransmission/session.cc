@@ -3572,6 +3572,7 @@ std::optional<std::string> tr_session::queueUsenetIntegrityAudit(tr_torrent cons
         .pieces = {},
     };
     auto waiting_for_uploads = false;
+    auto failed_local_pieces = std::vector<tr_piece_index_t>{};
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
         auto manifest = usenet_piece_store_->load(tor.info_hash_string());
@@ -3592,10 +3593,17 @@ std::optional<std::string> tr_session::queueUsenetIntegrityAudit(tr_torrent cons
         {
             return manual ? std::optional<std::string>{ "Usenet integrity audit is already running" } : std::nullopt;
         }
-        auto const backend_ready = std::ranges::all_of(
-            manifest->pieces,
-            [](auto const& piece) { return piece.state == tr_usenet_piece_state::Available && piece.verified_at != 0U; });
-        if (manual && !backend_ready)
+        if (manual)
+        {
+            for (tr_piece_index_t piece = 0U; piece < tor.piece_count(); ++piece)
+            {
+                if (manifest->pieces[piece].state == tr_usenet_piece_state::Failed && tor.has_piece(piece))
+                {
+                    failed_local_pieces.push_back(piece);
+                }
+            }
+        }
+        if (manual && (tr_usenet_manifest_has_pending_uploads(*manifest) || !std::empty(failed_local_pieces)))
         {
             if (manifest->integrity.state != tr_usenet_integrity_state::Queued)
             {
@@ -3623,16 +3631,25 @@ std::optional<std::string> tr_session::queueUsenetIntegrityAudit(tr_torrent cons
         else
         {
             task.pieces.reserve(tor.piece_count());
-            for (tr_piece_index_t piece = 0U; piece < tor.piece_count(); ++piece)
+            auto append_pieces = [&](bool const priority)
             {
-                task.pieces.push_back(
+                for (tr_piece_index_t piece = 0U; piece < tor.piece_count(); ++piece)
+                {
+                    if (tr_usenet_piece_needs_integrity_priority(manifest->pieces[piece]) != priority)
                     {
-                        .piece = piece,
-                        .message_id = manifest->pieces[piece].message_id,
-                        .expected_size = tor.piece_size(piece),
-                        .expected_hash = tor.piece_hash(piece),
-                    });
-            }
+                        continue;
+                    }
+                    task.pieces.push_back(
+                        {
+                            .piece = piece,
+                            .message_id = manifest->pieces[piece].message_id,
+                            .expected_size = tor.piece_size(piece),
+                            .expected_hash = tor.piece_hash(piece),
+                        });
+                }
+            };
+            append_pieces(true);
+            append_pieces(false);
 
             manifest->integrity = {
                 .state = tr_usenet_integrity_state::Checking,
@@ -3648,7 +3665,17 @@ std::optional<std::string> tr_session::queueUsenetIntegrityAudit(tr_torrent cons
 
     if (waiting_for_uploads)
     {
-        tr_logAddInfoTor(&tor, "Queued full Usenet integrity audit until pending uploads finish");
+        for (auto const piece : failed_local_pieces)
+        {
+            onUsenetPieceCompleted(tor, piece);
+        }
+        tr_logAddInfoTor(
+            &tor,
+            std::empty(failed_local_pieces) ?
+                "Queued full Usenet integrity audit until pending uploads finish" :
+                fmt::format(
+                    "Queued {} failed local Usenet piece(s) for repair before full integrity audit",
+                    std::size(failed_local_pieces)));
         return {};
     }
 
@@ -4588,13 +4615,43 @@ void tr_session::usenetUploadWorker()
 
             auto single_upload_error = std::optional<std::string>{ "single-piece retry skipped because Usenet IO is stopping" };
             auto single_diagnostics = tr_usenet_upload_diagnostics{};
+            auto retry_paths = staged_paths_by_task[i];
+            if (acquireUsenetIoSlot())
+            {
+                auto missing = tr_usenet_missing_piece_articles(
+                    {
+                        .config_dir = config_dir_,
+                        .base_message_id = task.message_id,
+                        .article_count = task.article_count,
+                    });
+                releaseUsenetIoSlot();
+                if (auto const* const missing_articles = std::get_if<std::vector<size_t>>(&missing);
+                    missing_articles != nullptr && !std::empty(*missing_articles))
+                {
+                    retry_paths.clear();
+                    retry_paths.reserve(std::size(*missing_articles));
+                    for (auto const article : *missing_articles)
+                    {
+                        if (article < std::size(staged_paths_by_task[i]))
+                        {
+                            retry_paths.push_back(staged_paths_by_task[i][article]);
+                        }
+                    }
+                    tr_logAddInfo(
+                        fmt::format("Retrying {} missing Usenet article(s) for piece {}", std::size(retry_paths), task.piece));
+                }
+                else if (auto const* const scan_error = std::get_if<std::string>(&missing); scan_error != nullptr)
+                {
+                    error += fmt::format("; missing article scan failed: {}", *scan_error);
+                }
+            }
             auto const single_retry_slots = std::min(usenetIoLimit(), size_t{ 2U });
             if (acquireUsenetIoSlots(single_retry_slots))
             {
                 single_upload_error = tr_usenet_upload_files(
                     {
                         .config_dir = config_dir_,
-                        .file_paths = staged_paths_by_task[i],
+                        .file_paths = std::move(retry_paths),
                         .article_size = task.article_payload_size,
                         .connections = 1U,
                     },

@@ -157,6 +157,26 @@ TEST_F(UsenetPieceStoreTest, immediateReadbackEvictionBypassesOnlyTheTorrentWide
     EXPECT_TRUE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::Incomplete, true));
 }
 
+TEST_F(UsenetPieceStoreTest, integrityWaitsForPendingUploadsButNotFailedPieces)
+{
+    auto manifest = tr_usenet_piece_manifest{};
+    manifest.pieces.resize(2U);
+
+    EXPECT_TRUE(tr_usenet_manifest_has_pending_uploads(manifest));
+
+    manifest.pieces[0].state = tr_usenet_piece_state::Uploading;
+    manifest.pieces[1].state = tr_usenet_piece_state::Available;
+    EXPECT_TRUE(tr_usenet_manifest_has_pending_uploads(manifest));
+
+    manifest.pieces[0].state = tr_usenet_piece_state::Failed;
+    EXPECT_FALSE(tr_usenet_manifest_has_pending_uploads(manifest));
+
+    EXPECT_TRUE(tr_usenet_piece_needs_integrity_priority(manifest.pieces[0]));
+    EXPECT_TRUE(tr_usenet_piece_needs_integrity_priority(manifest.pieces[1]));
+    manifest.pieces[1].verified_at = 1U;
+    EXPECT_FALSE(tr_usenet_piece_needs_integrity_priority(manifest.pieces[1]));
+}
+
 TEST_F(UsenetPieceStoreTest, ensureTorrentCreatesManifest)
 {
     auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);

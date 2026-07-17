@@ -768,6 +768,19 @@ bool tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state const state, b
     return state == tr_usenet_integrity_state::Ready || evict_after_readback;
 }
 
+bool tr_usenet_manifest_has_pending_uploads(tr_usenet_piece_manifest const& manifest) noexcept
+{
+    return std::ranges::any_of(
+        manifest.pieces,
+        [](auto const& piece)
+        { return piece.state == tr_usenet_piece_state::Unknown || piece.state == tr_usenet_piece_state::Uploading; });
+}
+
+bool tr_usenet_piece_needs_integrity_priority(tr_usenet_piece_entry const& entry) noexcept
+{
+    return entry.state != tr_usenet_piece_state::Available || entry.verified_at == 0U;
+}
+
 std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view const name) noexcept
 {
     for (auto const state : { tr_usenet_integrity_state::NotChecked,
