@@ -1083,6 +1083,8 @@ public:
         std::string temp_file,
         size_t article_count,
         uint64_t article_payload_size,
+        bool upload_attempted,
+        bool duplicate_verified,
         bool success,
         std::string error);
 

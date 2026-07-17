@@ -251,6 +251,25 @@ TEST_F(UsenetPieceStoreTest, discoveryEvidenceRequiresThreeDistinctHashesAndHalf
     EXPECT_TRUE(tr_usenet_discovery_evidence_ready(info, 2U));
 }
 
+TEST_F(UsenetPieceStoreTest, discoveryEvidenceDeduplicatesSharedMessageIds)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+    auto manifest = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(manifest);
+    ASSERT_GE(manifest->piece_count(), 3U);
+    manifest->pieces[1].message_id = manifest->pieces[0].message_id;
+
+    EXPECT_FALSE(manifest->record_discovery_upload_attempt(0U, true));
+    EXPECT_FALSE(manifest->record_discovery_upload_attempt(1U, true));
+    EXPECT_EQ(1U, std::size(manifest->discovery.attempted_pieces));
+    EXPECT_EQ(1U, std::size(manifest->discovery.duplicate_verified_pieces));
+    EXPECT_FALSE(manifest->record_discovery_upload_attempt(2U, false));
+    EXPECT_EQ(2U, std::size(manifest->discovery.attempted_pieces));
+    EXPECT_EQ(1U, std::size(manifest->discovery.duplicate_verified_pieces));
+}
+
 TEST_F(UsenetPieceStoreTest, discoverySamplePiecesAreDeterministicBoundedAndUseful)
 {
     auto const samples = tr_usenet_discovery_sample_pieces("0123456789012345678901234567890123456789"sv, 100U, 16U);

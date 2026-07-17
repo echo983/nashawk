@@ -363,6 +363,23 @@ struct TempDirGuard
     return {};
 }
 
+[[nodiscard]] bool upload_diagnostics_include_piece(
+    tr_usenet_upload_diagnostics const& diagnostics,
+    std::string_view const base_message_id,
+    size_t const article_count)
+{
+    for (size_t article = 0U; article < article_count; ++article)
+    {
+        auto const message_id = tr_usenet_piece_article_message_id(base_message_id, article);
+        if (message_id &&
+            std::ranges::find(diagnostics.duplicate_message_ids, *message_id) != std::end(diagnostics.duplicate_message_ids))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 [[nodiscard]] std::optional<std::string> stage_usenet_piece_parts(
     std::string_view const source,
     std::string_view const batch_dir,
@@ -3884,10 +3901,20 @@ void tr_session::usenetUploadWorker()
             }
         }
 
-        auto finish_task = [this](UsenetUploadTask task, bool const success, std::string error)
+        auto finish_task = [this](
+                               UsenetUploadTask task,
+                               bool const upload_attempted,
+                               bool const duplicate_verified,
+                               bool const success,
+                               std::string error)
         {
             queue_session_thread(
-                [this, task = std::move(task), success, error = std::move(error)]() mutable
+                [this,
+                 task = std::move(task),
+                 upload_attempted,
+                 duplicate_verified,
+                 success,
+                 error = std::move(error)]() mutable
                 {
                     onUsenetPieceUploadFinished(
                         std::move(task.info_hash_string),
@@ -3896,6 +3923,8 @@ void tr_session::usenetUploadWorker()
                         std::move(task.temp_file),
                         task.article_count,
                         task.article_payload_size,
+                        upload_attempted,
+                        duplicate_verified,
                         success,
                         std::move(error));
                 });
@@ -3917,7 +3946,7 @@ void tr_session::usenetUploadWorker()
         {
             for (auto& task : batch)
             {
-                finish_task(std::move(task), false, *dir_error);
+                finish_task(std::move(task), false, false, false, *dir_error);
             }
             continue;
         }
@@ -3954,7 +3983,7 @@ void tr_session::usenetUploadWorker()
         {
             for (auto& task : batch)
             {
-                finish_task(std::move(task), false, *staging_error);
+                finish_task(std::move(task), false, false, false, *staging_error);
             }
             continue;
         }
@@ -3980,13 +4009,15 @@ void tr_session::usenetUploadWorker()
             return;
         }
 
+        auto upload_diagnostics = tr_usenet_upload_diagnostics{};
         auto const upload_error = tr_usenet_upload_files(
             {
                 .config_dir = config_dir_,
                 .file_paths = std::move(staged_paths),
                 .article_size = article_payload_size,
                 .connections = connection_count,
-            });
+            },
+            &upload_diagnostics);
         releaseUsenetIoSlots(reserved_io_slots);
 
         if (!upload_error)
@@ -4002,12 +4033,14 @@ void tr_session::usenetUploadWorker()
                 {
                     finish_task(
                         std::move(task),
+                        true,
+                        false,
                         false,
                         fmt::format("upload completed but mandatory readback failed: {}", *readback_error));
                 }
                 else
                 {
-                    finish_task(std::move(task), true, {});
+                    finish_task(std::move(task), true, false, true, {});
                 }
             }
             continue;
@@ -4021,6 +4054,7 @@ void tr_session::usenetUploadWorker()
         {
             auto& task = batch[i];
             auto success = false;
+            auto duplicate_verified = false;
             auto error = *upload_error;
 
             if (acquireUsenetIoSlot())
@@ -4037,7 +4071,11 @@ void tr_session::usenetUploadWorker()
                 else
                 {
                     ++readback_success_count;
-                    finish_task(std::move(task), true, {});
+                    duplicate_verified = upload_diagnostics_include_piece(
+                        upload_diagnostics,
+                        task.message_id,
+                        task.article_count);
+                    finish_task(std::move(task), true, duplicate_verified, true, {});
                     releaseUsenetIoSlot();
                     continue;
                 }
@@ -4049,6 +4087,7 @@ void tr_session::usenetUploadWorker()
             }
 
             auto single_upload_error = std::optional<std::string>{ "single-piece retry skipped because Usenet IO is stopping" };
+            auto single_diagnostics = tr_usenet_upload_diagnostics{};
             auto const single_retry_slots = std::min(usenetIoLimit(), size_t{ 2U });
             if (acquireUsenetIoSlots(single_retry_slots))
             {
@@ -4058,7 +4097,8 @@ void tr_session::usenetUploadWorker()
                         .file_paths = staged_paths_by_task[i],
                         .article_size = task.article_payload_size,
                         .connections = 1U,
-                    });
+                    },
+                    &single_diagnostics);
                 releaseUsenetIoSlots(single_retry_slots);
 
                 if (!single_upload_error)
@@ -4070,7 +4110,7 @@ void tr_session::usenetUploadWorker()
                     else
                     {
                         ++single_retry_success_count;
-                        finish_task(std::move(task), true, {});
+                        finish_task(std::move(task), true, false, true, {});
                         continue;
                     }
                 }
@@ -4092,6 +4132,11 @@ void tr_session::usenetUploadWorker()
                 {
                     ++readback_success_count;
                     success = true;
+                    duplicate_verified = upload_diagnostics_include_piece(
+                                             upload_diagnostics,
+                                             task.message_id,
+                                             task.article_count) ||
+                        upload_diagnostics_include_piece(single_diagnostics, task.message_id, task.article_count);
                     error.clear();
                 }
 
@@ -4106,7 +4151,7 @@ void tr_session::usenetUploadWorker()
             {
                 ++failed_count;
             }
-            finish_task(std::move(task), success, std::move(error));
+            finish_task(std::move(task), true, duplicate_verified, success, std::move(error));
         }
 
         tr_logAddInfo(
@@ -4217,6 +4262,8 @@ void tr_session::onUsenetPieceUploadFinished(
     std::string temp_file,
     size_t const article_count,
     uint64_t const article_payload_size,
+    bool const upload_attempted,
+    bool const duplicate_verified,
     bool const success,
     std::string error)
 {
@@ -4229,6 +4276,7 @@ void tr_session::onUsenetPieceUploadFinished(
 
     auto const state = success ? tr_usenet_piece_state::Available : tr_usenet_piece_state::Failed;
     auto store_error = std::optional<std::string>{};
+    auto evidence_ready = false;
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
         store_error = usenet_piece_store_->set_message_id_state(
@@ -4264,6 +4312,18 @@ void tr_session::onUsenetPieceUploadFinished(
                 }
             }
         }
+        if (!store_error && upload_attempted)
+        {
+            auto manifest = usenet_piece_store_->load(info_hash_string);
+            if (manifest)
+            {
+                evidence_ready = manifest->record_discovery_upload_attempt(piece, success && duplicate_verified);
+                if (!usenet_piece_store_->save(*manifest))
+                {
+                    store_error = "Could not save Usenet discovery upload evidence";
+                }
+            }
+        }
     }
 
     if (store_error)
@@ -4274,6 +4334,14 @@ void tr_session::onUsenetPieceUploadFinished(
 
     if (success)
     {
+        if (duplicate_verified)
+        {
+            tr_logAddInfo(fmt::format("Verified duplicate Usenet upload evidence for piece {}", piece));
+        }
+        if (evidence_ready)
+        {
+            tr_logAddInfo(fmt::format("Usenet duplicate evidence threshold reached for torrent {}", info_hash_string));
+        }
         tr_logAddTrace(fmt::format("Usenet upload completed for piece {}", piece));
         scanUsenetEvictionCandidates();
         if (auto const digest = tr_sha1_from_string(info_hash_string); digest)
