@@ -402,6 +402,15 @@ TEST_F(SessionTest, usenetMultipartPieceSizeIsAdmittedWithoutUnpromptedDiscovery
     EXPECT_TRUE(summary.discovery.attempted_pieces.empty());
     EXPECT_TRUE(summary.discovery.duplicate_verified_pieces.empty());
 
+    auto store = tr_usenet_piece_store{ config_dir, 256U * 1024U };
+    auto manifest = store.load(tor->info_hash_string());
+    ASSERT_TRUE(manifest);
+    manifest->discovery.state = tr_usenet_discovery_state::Checking;
+    ASSERT_TRUE(store.save(*manifest));
+    EXPECT_EQ(
+        (std::optional<std::string>{ "Usenet discovery is already running" }),
+        session->queueUsenetIntegrityAudit(*tor, true));
+
     tr_sessionClose(session, 0.5);
 }
 

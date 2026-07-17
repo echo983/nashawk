@@ -755,6 +755,11 @@ bool tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state const
     return state == tr_usenet_integrity_state::Checking || state == tr_usenet_integrity_state::Repairing;
 }
 
+bool tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state const state) noexcept
+{
+    return state == tr_usenet_discovery_state::Checking;
+}
+
 std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view const name) noexcept
 {
     for (auto const state : { tr_usenet_integrity_state::NotChecked,

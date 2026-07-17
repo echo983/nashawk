@@ -3478,6 +3478,10 @@ std::optional<std::string> tr_session::queueUsenetIntegrityAudit(tr_torrent cons
         {
             return "Usenet manifest is missing or incomplete";
         }
+        if (tr_usenet_integrity_is_blocked_by_discovery(manifest->discovery.state))
+        {
+            return manual ? std::optional<std::string>{ "Usenet discovery is already running" } : std::nullopt;
+        }
         if (!manual && manifest->discovery.state != tr_usenet_discovery_state::Available &&
             std::ranges::any_of(manifest->pieces, [](auto const& piece) { return piece.verified_at == 0U; }))
         {
@@ -3978,6 +3982,7 @@ void tr_session::cancelPendingUsenetUploadsForDiscovery(std::string_view const i
         }
     }
 
+    auto reset_saved = std::empty(cancelled);
     if (usenet_piece_store_ != nullptr && !std::empty(cancelled))
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
@@ -3996,7 +4001,25 @@ void tr_session::cancelPendingUsenetUploadsForDiscovery(std::string_view const i
             {
                 tr_logAddWarn(fmt::format("Could not reset cancelled Usenet uploads for torrent {}", info_hash_string));
             }
+            else
+            {
+                reset_saved = true;
+            }
         }
+    }
+
+    if (!reset_saved)
+    {
+        {
+            auto lock = std::lock_guard{ usenet_upload_mutex_ };
+            for (auto iter = std::rbegin(cancelled); iter != std::rend(cancelled); ++iter)
+            {
+                usenet_upload_queue_.push_front(std::move(*iter));
+            }
+        }
+        usenet_upload_cv_.notify_all();
+        tr_logAddWarn(fmt::format("Restored {} Usenet upload(s) after discovery hold failed", std::size(cancelled)));
+        return;
     }
 
     for (auto const& task : cancelled)

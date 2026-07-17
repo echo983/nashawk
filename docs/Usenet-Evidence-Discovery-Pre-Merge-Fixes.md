@@ -64,3 +64,21 @@ enabled CTest tests passed (11 project-disabled tests were not run), and Web UI
 lint/build passed. The real-provider evidence roundtrip was completed before
 these fixes; this change set does not repeat external posts solely for merge
 validation.
+
+## Second Review Follow-Up
+
+The subsequent merge review found three additional gaps, addressed on
+`debug/usenet-evidence-discovery-merge-blockers`:
+
+- a failed manifest save while cancelling queued uploads restores those tasks
+  to the front of the upload queue instead of deleting their temporary files;
+- integrity audit startup now rejects discovery `checking`, completing the
+  state exclusion in both directions;
+- Windows synchronous subprocess execution now captures bounded stderr through
+  an inherited pipe, enabling the same structured duplicate diagnostics as the
+  POSIX implementation.
+
+The second follow-up passed all 629 enabled CTest tests (11 remained disabled)
+and Web UI lint/build on Linux. A Windows cross-compiler was not available in
+the local environment, so the Windows implementation still requires CI or a
+native Windows build confirmation.
