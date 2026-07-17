@@ -320,6 +320,12 @@ TEST_F(UsenetPieceStoreTest, discoveryAndIntegrityWorkAreMutuallyExclusive)
     EXPECT_TRUE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Repairing));
     EXPECT_FALSE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Ready));
     EXPECT_FALSE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Error));
+
+    EXPECT_FALSE(tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state::NotChecked));
+    EXPECT_TRUE(tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state::Checking));
+    EXPECT_FALSE(tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state::Available));
+    EXPECT_FALSE(tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state::Missing));
+    EXPECT_FALSE(tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state::Error));
 }
 
 TEST_F(UsenetPieceStoreTest, discoverySamplePiecesAreDeterministicBoundedAndUseful)
