@@ -205,27 +205,27 @@ The equivalent settings keys are:
   "usenet_check_article_size": 2097152,
   "usenet_cache_size_mib": 0,
   "usenet_eviction_enabled": false,
-  "usenet_eviction_min_age_minutes": 60,
+  "usenet_eviction_min_age_minutes": 0,
   "usenet_discovery_enabled": true,
   "usenet_discovery_sample_size": 16,
   "usenet_upload_concurrency": 40
 }
 ```
 
-Local piece eviction is disabled by default. To enable the first conservative
-eviction policy:
+Local piece eviction is disabled by default. To enable immediate eviction after
+mandatory remote verification:
 
 ```sh
 transmission-daemon --usenet-enabled \
   --usenet-eviction-enabled \
-  --usenet-eviction-min-age-minutes 60 \
+  --usenet-eviction-min-age-minutes 0 \
   --usenet-cache-size-mib 0
 ```
 
-`usenet_cache_size_mib` defaults to `0`, which disables size-pressure eviction.
-When `usenet_eviction_enabled` is true, age-based eviction may still remove
-pieces that are already marked available in the Usenet manifest and have reached
-`usenet_eviction_min_age_minutes`.
+`usenet_cache_size_mib` and `usenet_eviction_min_age_minutes` both default to
+`0`. When eviction is enabled, a fully verified Ready torrent can therefore
+release local pieces immediately. Set a positive minimum age or cache size to
+retain a local hot layer.
 
 Usenet discovery is enabled by default when Usenet mode is enabled. It can be
 disabled explicitly:

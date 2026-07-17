@@ -3886,15 +3886,19 @@ void tr_session::usenetUploadWorker()
 
         auto finish_task = [this](UsenetUploadTask task, bool const success, std::string error)
         {
-            onUsenetPieceUploadFinished(
-                std::move(task.info_hash_string),
-                task.piece,
-                std::move(task.message_id),
-                std::move(task.temp_file),
-                task.article_count,
-                task.article_payload_size,
-                success,
-                std::move(error));
+            queue_session_thread(
+                [this, task = std::move(task), success, error = std::move(error)]() mutable
+                {
+                    onUsenetPieceUploadFinished(
+                        std::move(task.info_hash_string),
+                        task.piece,
+                        std::move(task.message_id),
+                        std::move(task.temp_file),
+                        task.article_count,
+                        task.article_payload_size,
+                        success,
+                        std::move(error));
+                });
         };
         auto verify_task = [this](UsenetUploadTask const& task) -> std::optional<std::string>
         {

@@ -722,7 +722,7 @@ TEST_F(RpcTest, sessionStatsIncludesUsenetRuntimeSnapshot)
     EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_download_in_flight).value_or(-1));
     EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_upload_concurrency).value_or(-1));
     EXPECT_FALSE(usenet->value_if<bool>(TR_KEY_usenet_eviction_enabled).value_or(true));
-    EXPECT_EQ(60, usenet->value_if<int64_t>(TR_KEY_usenet_eviction_min_age_minutes).value_or(-1));
+    EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_eviction_min_age_minutes).value_or(-1));
     EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_cache_size_mib).value_or(-1));
 }
 

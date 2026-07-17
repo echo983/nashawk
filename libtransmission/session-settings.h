@@ -125,7 +125,7 @@ public:
     size_t usenet_cache_size_mib = 0U;
     size_t usenet_check_article_size = DefaultUsenetCheckArticleSize;
     size_t usenet_discovery_sample_size = 16U;
-    size_t usenet_eviction_min_age_minutes = 60U;
+    size_t usenet_eviction_min_age_minutes = 0U;
     size_t usenet_upload_concurrency = 4U;
     small::max_size_vector<tr_preferred_transport, PreferredTransportCount> preferred_transports = {
         tr_preferred_transport::UTP,
