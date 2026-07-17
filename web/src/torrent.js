@@ -351,15 +351,12 @@ export class Torrent extends EventTarget {
           title: 'Missing or corrupt Usenet pieces are being repaired',
         };
       }
-      if (integrity !== 'ready') {
+      if ((summary.integrity?.waiting_for_peers ?? 0) > 0) {
         return {
-          label:
-            (summary.integrity?.waiting_for_peers ?? 0) > 0
-              ? 'Waiting for Peers'
-              : 'Verification Needed',
+          label: 'Waiting for Peers',
           percent: servablePercent,
           state: 'usenet-unverified',
-          title: 'All pieces appear servable but have not passed a full audit',
+          title: 'Usenet repair is waiting for missing pieces from peers',
         };
       }
 
