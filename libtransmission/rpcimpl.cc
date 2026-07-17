@@ -847,9 +847,25 @@ namespace make_torrent_field_helpers
     map.try_emplace(TR_KEY_failed, summary.failed);
     map.try_emplace(TR_KEY_servable, summary.servable);
 
-    auto discovery = tr_variant::Map{ 5U };
+    auto discovery = tr_variant::Map{ 11U };
     discovery.try_emplace(TR_KEY_status, tr_variant::unmanaged_string(tr_usenet_discovery_state_name(summary.discovery.state)));
+    discovery.try_emplace(
+        tr_quark_new("trigger"sv),
+        tr_variant::unmanaged_string(tr_usenet_discovery_trigger_name(summary.discovery.trigger)));
     discovery.try_emplace(tr_quark_new("checked_at"sv), static_cast<int64_t>(summary.discovery.checked_at));
+    discovery.try_emplace(
+        tr_quark_new("evidence_window_started_at"sv),
+        static_cast<int64_t>(summary.discovery.evidence_window_started_at));
+    discovery.try_emplace(tr_quark_new("retry_after"sv), static_cast<int64_t>(summary.discovery.retry_after));
+    discovery.try_emplace(
+        tr_quark_new("attempted_piece_count"sv),
+        static_cast<int64_t>(std::size(summary.discovery.attempted_pieces)));
+    discovery.try_emplace(
+        tr_quark_new("duplicate_evidence_count"sv),
+        static_cast<int64_t>(std::size(summary.discovery.duplicate_verified_pieces)));
+    discovery.try_emplace(
+        tr_quark_new("required_evidence_count"sv),
+        static_cast<int64_t>(std::min<size_t>(3U, summary.piece_count)));
     discovery.try_emplace(tr_quark_new("sample_size"sv), static_cast<int64_t>(summary.discovery.sample_size));
     if (!std::empty(summary.discovery.error))
     {

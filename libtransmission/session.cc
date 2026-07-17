@@ -2673,6 +2673,7 @@ void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
 
 std::optional<std::string> tr_session::queueUsenetDiscovery(tr_torrent const& tor, bool const manual)
 {
+    static constexpr auto AutomaticDiscoveryRetryCooldown = uint64_t{ 30U * 60U };
     if (usenet_piece_store_ == nullptr || !settings_.usenet_enabled)
     {
         return "Usenet backend is disabled";
@@ -2703,14 +2704,26 @@ std::optional<std::string> tr_session::queueUsenetDiscovery(tr_torrent const& to
         {
             return "Torrent is already discovered on Usenet";
         }
+        auto const now = static_cast<uint64_t>(tr_time());
+        if (!manual && manifest->discovery.retry_after > now)
+        {
+            return fmt::format("Automatic Usenet discovery is cooling down until {}", manifest->discovery.retry_after);
+        }
         if (!manual && !tr_usenet_discovery_evidence_ready(manifest->discovery, manifest->piece_count()))
         {
             return "Verified duplicate evidence threshold has not been reached";
         }
 
-        auto const sample_pieces = tr_usenet_discovery_sample_pieces(
+        auto const candidate_count = std::min<size_t>(
+            manifest->piece_count(),
+            settings_.usenet_discovery_sample_size + std::size(manifest->discovery.duplicate_verified_pieces));
+        auto sample_pieces = tr_usenet_discovery_sample_pieces(
             tor.info_hash_string(),
             manifest->piece_count(),
+            candidate_count);
+        sample_pieces = tr_usenet_prioritize_discovery_samples(
+            std::move(sample_pieces),
+            manifest->discovery.duplicate_verified_pieces,
             settings_.usenet_discovery_sample_size);
         if (std::empty(sample_pieces))
         {
@@ -2736,6 +2749,10 @@ std::optional<std::string> tr_session::queueUsenetDiscovery(tr_torrent const& to
         manifest->discovery.sample_size = settings_.usenet_discovery_sample_size;
         manifest->discovery.sampled_pieces = sample_pieces;
         manifest->discovery.error.clear();
+        if (!manual)
+        {
+            manifest->discovery.retry_after = now + AutomaticDiscoveryRetryCooldown;
+        }
         if (!usenet_piece_store_->save(*manifest))
         {
             return "Could not save Usenet discovery state";
@@ -3368,6 +3385,7 @@ void tr_session::onUsenetDiscoveryFinished(UsenetDiscoveryResult result)
             {
                 manifest->mark_message_id_verified(sample.message_id, verified_at);
             }
+            manifest->discovery.retry_after = 0U;
         }
         else if (manifest->discovery.trigger == tr_usenet_discovery_trigger::DuplicateEvidence)
         {
@@ -3375,6 +3393,7 @@ void tr_session::onUsenetDiscoveryFinished(UsenetDiscoveryResult result)
             // are required before automatic discovery can run again.
             manifest->discovery.attempted_pieces.clear();
             manifest->discovery.duplicate_verified_pieces.clear();
+            manifest->discovery.evidence_window_started_at = 0U;
         }
 
         if (!usenet_piece_store_->save(*manifest))

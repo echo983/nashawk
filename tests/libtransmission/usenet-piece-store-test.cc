@@ -217,6 +217,8 @@ TEST_F(UsenetPieceStoreTest, discoveryMetadataRoundtrips)
     manifest->discovery.sampled_pieces = { 0U, 1U, 2U, 3U };
     manifest->discovery.attempted_pieces = { 0U, 1U, 2U, 3U };
     manifest->discovery.duplicate_verified_pieces = { 0U, 1U, 2U };
+    manifest->discovery.evidence_window_started_at = 12000U;
+    manifest->discovery.retry_after = 13000U;
     manifest->discovery.error = "ignored after success";
     manifest->set_all_piece_states(tr_usenet_piece_state::Available);
     ASSERT_TRUE(store.save(*manifest));
@@ -230,6 +232,8 @@ TEST_F(UsenetPieceStoreTest, discoveryMetadataRoundtrips)
     EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U, 1U, 2U, 3U }), loaded->discovery.sampled_pieces);
     EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U, 1U, 2U, 3U }), loaded->discovery.attempted_pieces);
     EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U, 1U, 2U }), loaded->discovery.duplicate_verified_pieces);
+    EXPECT_EQ(12000U, loaded->discovery.evidence_window_started_at);
+    EXPECT_EQ(13000U, loaded->discovery.retry_after);
     EXPECT_EQ("ignored after success"sv, loaded->discovery.error);
     EXPECT_TRUE(loaded->has_meaningful_state());
     ASSERT_FALSE(std::empty(loaded->pieces));
@@ -262,6 +266,7 @@ TEST_F(UsenetPieceStoreTest, discoveryEvidenceDeduplicatesSharedMessageIds)
     manifest->pieces[1].message_id = manifest->pieces[0].message_id;
 
     EXPECT_FALSE(manifest->record_discovery_upload_attempt(0U, true));
+    EXPECT_GT(manifest->discovery.evidence_window_started_at, 0U);
     EXPECT_FALSE(manifest->record_discovery_upload_attempt(1U, true));
     EXPECT_EQ(1U, std::size(manifest->discovery.attempted_pieces));
     EXPECT_EQ(1U, std::size(manifest->discovery.duplicate_verified_pieces));
@@ -285,6 +290,18 @@ TEST_F(UsenetPieceStoreTest, discoverySamplePiecesAreDeterministicBoundedAndUsef
     EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U }), tr_usenet_discovery_sample_pieces("hash"sv, 1U, 16U));
     EXPECT_TRUE(std::empty(tr_usenet_discovery_sample_pieces("hash"sv, 100U, 0U)));
     EXPECT_TRUE(std::empty(tr_usenet_discovery_sample_pieces("hash"sv, 0U, 16U)));
+}
+
+TEST_F(UsenetPieceStoreTest, discoverySamplesPreferPiecesWithoutDuplicateEvidence)
+{
+    auto const candidates = std::vector<tr_piece_index_t>{ 0U, 2U, 4U, 6U, 8U, 10U };
+    auto const evidence = std::vector<tr_piece_index_t>{ 0U, 4U, 8U };
+
+    EXPECT_EQ((std::vector<tr_piece_index_t>{ 2U, 6U, 10U }), tr_usenet_prioritize_discovery_samples(candidates, evidence, 3U));
+    EXPECT_EQ(
+        (std::vector<tr_piece_index_t>{ 0U, 2U, 4U, 6U, 10U }),
+        tr_usenet_prioritize_discovery_samples(candidates, evidence, 5U));
+    EXPECT_TRUE(std::empty(tr_usenet_prioritize_discovery_samples(candidates, evidence, 0U)));
 }
 
 TEST_F(UsenetPieceStoreTest, integrityMetadataRoundtrips)

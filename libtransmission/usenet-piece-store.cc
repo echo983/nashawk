@@ -79,6 +79,16 @@ auto constexpr Domain = "nashawk.local"sv;
     return tr_quark_new("duplicate_verified_pieces"sv);
 }
 
+[[nodiscard]] tr_quark key_evidence_window_started_at()
+{
+    return tr_quark_new("evidence_window_started_at"sv);
+}
+
+[[nodiscard]] tr_quark key_retry_after()
+{
+    return tr_quark_new("retry_after"sv);
+}
+
 [[nodiscard]] tr_quark key_error()
 {
     return tr_quark_new("error"sv);
@@ -166,7 +176,7 @@ auto constexpr Domain = "nashawk.local"sv;
     top.try_emplace(TR_KEY_piece_size, static_cast<int64_t>(manifest.piece_size));
     top.try_emplace(key_max_article_size(), static_cast<int64_t>(manifest.max_article_size));
 
-    auto discovery = tr_variant::Map{ 8U };
+    auto discovery = tr_variant::Map{ 10U };
     discovery.try_emplace(
         TR_KEY_status,
         tr_variant::unmanaged_string(tr_usenet_discovery_state_name(manifest.discovery.state)));
@@ -174,6 +184,10 @@ auto constexpr Domain = "nashawk.local"sv;
         key_trigger(),
         tr_variant::unmanaged_string(tr_usenet_discovery_trigger_name(manifest.discovery.trigger)));
     discovery.try_emplace(key_checked_at(), static_cast<int64_t>(manifest.discovery.checked_at));
+    discovery.try_emplace(
+        key_evidence_window_started_at(),
+        static_cast<int64_t>(manifest.discovery.evidence_window_started_at));
+    discovery.try_emplace(key_retry_after(), static_cast<int64_t>(manifest.discovery.retry_after));
     discovery.try_emplace(key_sample_size(), static_cast<int64_t>(manifest.discovery.sample_size));
     if (!std::empty(manifest.discovery.error))
     {
@@ -324,6 +338,17 @@ auto constexpr Domain = "nashawk.local"sv;
         if (auto const checked_at = discovery->value_if<int64_t>(key_checked_at()); checked_at && *checked_at > 0)
         {
             manifest.discovery.checked_at = static_cast<uint64_t>(*checked_at);
+        }
+
+        if (auto const started_at = discovery->value_if<int64_t>(key_evidence_window_started_at());
+            started_at && *started_at > 0)
+        {
+            manifest.discovery.evidence_window_started_at = static_cast<uint64_t>(*started_at);
+        }
+
+        if (auto const retry_after = discovery->value_if<int64_t>(key_retry_after()); retry_after && *retry_after > 0)
+        {
+            manifest.discovery.retry_after = static_cast<uint64_t>(*retry_after);
         }
 
         if (auto const sample_size = discovery->value_if<int64_t>(key_sample_size()); sample_size && *sample_size > 0)
@@ -797,6 +822,21 @@ std::vector<tr_piece_index_t> tr_usenet_discovery_sample_pieces(
     return samples;
 }
 
+std::vector<tr_piece_index_t> tr_usenet_prioritize_discovery_samples(
+    std::vector<tr_piece_index_t> candidates,
+    std::span<tr_piece_index_t const> duplicate_verified_pieces,
+    size_t const sample_size)
+{
+    auto const is_unverified = [duplicate_verified_pieces](tr_piece_index_t const piece)
+    {
+        return std::ranges::find(duplicate_verified_pieces, piece) == std::end(duplicate_verified_pieces);
+    };
+    std::stable_partition(std::begin(candidates), std::end(candidates), is_unverified);
+    candidates.resize(std::min(sample_size, std::size(candidates)));
+    std::sort(std::begin(candidates), std::end(candidates));
+    return candidates;
+}
+
 bool tr_usenet_piece_is_eviction_eligible(
     tr_usenet_piece_entry const& entry,
     bool const has_local_piece,
@@ -850,6 +890,11 @@ bool tr_usenet_piece_manifest::record_discovery_upload_attempt(tr_piece_index_t 
     if (piece >= std::size(pieces))
     {
         return false;
+    }
+
+    if (discovery.evidence_window_started_at == 0U)
+    {
+        discovery.evidence_window_started_at = now_seconds();
     }
 
     auto add_unique_message_id = [this, piece](std::vector<tr_piece_index_t>& values)

@@ -91,6 +91,8 @@ struct tr_usenet_discovery_info
     std::vector<tr_piece_index_t> sampled_pieces;
     std::vector<tr_piece_index_t> attempted_pieces;
     std::vector<tr_piece_index_t> duplicate_verified_pieces;
+    uint64_t evidence_window_started_at = 0U;
+    uint64_t retry_after = 0U;
     std::string error;
 };
 
@@ -197,6 +199,10 @@ private:
 [[nodiscard]] std::vector<tr_piece_index_t> tr_usenet_discovery_sample_pieces(
     std::string_view info_hash_string,
     tr_piece_index_t piece_count,
+    size_t sample_size);
+[[nodiscard]] std::vector<tr_piece_index_t> tr_usenet_prioritize_discovery_samples(
+    std::vector<tr_piece_index_t> candidates,
+    std::span<tr_piece_index_t const> duplicate_verified_pieces,
     size_t sample_size);
 [[nodiscard]] bool tr_usenet_piece_is_eviction_eligible(
     tr_usenet_piece_entry const& entry,
