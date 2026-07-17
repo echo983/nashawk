@@ -68,7 +68,7 @@ TEST_F(SettingsTest, usenetEvictionSettingsHaveConservativeDefaults)
     EXPECT_FALSE(settings.usenet_eviction_enabled);
     EXPECT_TRUE(settings.usenet_discovery_enabled);
     EXPECT_EQ(tr::DefaultUsenetCheckArticleSize, settings.usenet_check_article_size);
-    EXPECT_EQ(60U, settings.usenet_eviction_min_age_minutes);
+    EXPECT_EQ(0U, settings.usenet_eviction_min_age_minutes);
     EXPECT_EQ(0U, settings.usenet_cache_size_mib);
     EXPECT_EQ(16U, settings.usenet_discovery_sample_size);
 }

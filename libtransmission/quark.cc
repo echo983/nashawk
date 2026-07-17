@@ -682,6 +682,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "torrent_start"sv, // rpc
     "torrent_start_now"sv, // rpc
     "torrent_stop"sv, // rpc
+    "torrent_usenet_verify"sv, // rpc
     "torrent_verify"sv, // rpc
     "torrents"sv, // rpc
     "totalSize"sv, // rpc

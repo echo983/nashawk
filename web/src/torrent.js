@@ -323,6 +323,7 @@ export class Torrent extends EventTarget {
     const uploading = summary.uploading ?? 0;
     const failed = summary.failed ?? 0;
     const unknown = summary.unknown ?? 0;
+    const integrity = summary.integrity?.status ?? 'not_checked';
     const servablePercent = Math.min(servable / pieceCount, 1);
 
     if (servable >= pieceCount) {
@@ -331,6 +332,34 @@ export class Torrent extends EventTarget {
           label: 'Local',
           state: 'local',
           title: 'All pieces are currently stored locally',
+        };
+      }
+
+      if (integrity === 'checking') {
+        return {
+          label: 'Verifying Usenet',
+          percent: servablePercent,
+          state: 'usenet-verifying',
+          title: 'A full Usenet article and piece hash audit is running',
+        };
+      }
+      if (integrity === 'repairing') {
+        return {
+          label: 'Repairing Usenet',
+          percent: servablePercent,
+          state: 'usenet-repairing',
+          title: 'Missing or corrupt Usenet pieces are being repaired',
+        };
+      }
+      if (integrity !== 'ready') {
+        return {
+          label:
+            (summary.integrity?.waiting_for_peers ?? 0) > 0
+              ? 'Waiting for Peers'
+              : 'Verification Needed',
+          percent: servablePercent,
+          state: 'usenet-unverified',
+          title: 'All pieces appear servable but have not passed a full audit',
         };
       }
 
@@ -369,8 +398,11 @@ export class Torrent extends EventTarget {
     };
   }
   isUsenetServableComplete() {
-    const state = this.getUsenetServingState();
-    return ['local', 'usenet-ready', 'mixed-ready'].includes(state?.state);
+    const summary = this.getUsenetPieceSummary();
+    return (
+      (summary?.piece_count ?? 0) > 0 &&
+      (summary?.servable ?? 0) >= summary.piece_count
+    );
   }
   getStateString() {
     switch (this.getStatus()) {

@@ -722,7 +722,7 @@ TEST_F(RpcTest, sessionStatsIncludesUsenetRuntimeSnapshot)
     EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_download_in_flight).value_or(-1));
     EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_upload_concurrency).value_or(-1));
     EXPECT_FALSE(usenet->value_if<bool>(TR_KEY_usenet_eviction_enabled).value_or(true));
-    EXPECT_EQ(60, usenet->value_if<int64_t>(TR_KEY_usenet_eviction_min_age_minutes).value_or(-1));
+    EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_eviction_min_age_minutes).value_or(-1));
     EXPECT_EQ(0, usenet->value_if<int64_t>(TR_KEY_usenet_cache_size_mib).value_or(-1));
 }
 
@@ -808,8 +808,40 @@ TEST_F(RpcTest, torrentGetIncludesUsenetPieceSummary)
     EXPECT_EQ(0, summary->value_if<int64_t>(TR_KEY_unknown).value_or(-1));
     EXPECT_EQ(0, summary->value_if<int64_t>(TR_KEY_uploading).value_or(-1));
     EXPECT_EQ(0, summary->value_if<int64_t>(TR_KEY_available).value_or(-1));
+    EXPECT_EQ(0, summary->value_if<int64_t>(tr_quark_new("verified"sv)).value_or(-1));
     EXPECT_EQ(0, summary->value_if<int64_t>(TR_KEY_failed).value_or(-1));
     EXPECT_EQ(0, summary->value_if<int64_t>(TR_KEY_servable).value_or(-1));
+    auto* integrity = summary->find_if<tr_variant::Map>(tr_quark_new("integrity"sv));
+    ASSERT_NE(integrity, nullptr);
+    EXPECT_EQ("not_checked"sv, integrity->value_if<std::string_view>(TR_KEY_status).value_or(""sv));
+
+    tr_torrentRemove(tor, false);
+}
+
+TEST_F(RpcTest, torrentUsenetVerifyRejectsWhenBackendIsDisabled)
+{
+    auto* tor = zeroTorrentInit(ZeroTorrentState::NoFiles);
+    ASSERT_NE(nullptr, tor);
+
+    auto request_map = tr_variant::Map{ 4U };
+    request_map.try_emplace(TR_KEY_jsonrpc, JsonRpc::Version);
+    request_map.try_emplace(TR_KEY_method, tr_variant::unmanaged_string(TR_KEY_torrent_usenet_verify));
+    request_map.try_emplace(TR_KEY_id, 12345);
+    auto params = tr_variant::Map{ 1U };
+    auto ids = tr_variant::Vector{};
+    ids.emplace_back(tor->id());
+    params.try_emplace(TR_KEY_ids, std::move(ids));
+    request_map.try_emplace(TR_KEY_params, std::move(params));
+
+    auto request = tr_variant{ std::move(request_map) };
+    auto response = tr_variant{};
+    tr_rpc_request_exec(session_, request, [&response](tr_variant&& resp) { response = std::move(resp); });
+
+    auto* response_map = response.get_if<tr_variant::Map>();
+    ASSERT_NE(response_map, nullptr);
+    auto* error = response_map->find_if<tr_variant::Map>(TR_KEY_error);
+    ASSERT_NE(error, nullptr);
+    EXPECT_EQ(-32602, error->value_if<int64_t>(TR_KEY_code).value_or(0));
 
     tr_torrentRemove(tor, false);
 }

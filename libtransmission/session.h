@@ -106,9 +106,11 @@ struct tr_usenet_piece_summary
     size_t unknown = 0U;
     size_t uploading = 0U;
     size_t available = 0U;
+    size_t verified = 0U;
     size_t failed = 0U;
     size_t servable = 0U;
     tr_usenet_discovery_info discovery;
+    tr_usenet_integrity_info integrity;
 };
 
 namespace tr::test
@@ -1073,6 +1075,7 @@ public:
     void addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield);
     void fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
     void onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t piece);
+    [[nodiscard]] std::optional<std::string> queueUsenetIntegrityAudit(tr_torrent const& tor, bool manual);
     void onUsenetPieceUploadFinished(
         std::string info_hash_string,
         tr_piece_index_t piece,
@@ -1375,6 +1378,39 @@ private:
     std::deque<UsenetDiscoveryTask> usenet_discovery_queue_;
     std::unique_ptr<std::thread> usenet_discovery_thread_;
     bool usenet_discovery_stopping_ = false;
+
+    struct UsenetIntegrityTask
+    {
+        tr_torrent_id_t torrent_id = 0;
+        std::string info_hash_string;
+        std::vector<UsenetDiscoverySample> pieces;
+    };
+
+    struct UsenetIntegrityPieceResult
+    {
+        tr_piece_index_t piece = 0U;
+        std::string message_id;
+        size_t article_count = 0U;
+        std::string error;
+    };
+
+    struct UsenetIntegrityResult
+    {
+        UsenetIntegrityTask task;
+        std::vector<UsenetIntegrityPieceResult> pieces;
+        bool stopped = false;
+    };
+
+    void startUsenetIntegrityWorker();
+    void stopUsenetIntegrityWorker();
+    void usenetIntegrityWorker();
+    void onUsenetIntegrityFinished(UsenetIntegrityResult result);
+
+    std::mutex usenet_integrity_mutex_;
+    std::condition_variable usenet_integrity_cv_;
+    std::deque<UsenetIntegrityTask> usenet_integrity_queue_;
+    std::unique_ptr<std::thread> usenet_integrity_thread_;
+    bool usenet_integrity_stopping_ = false;
 
     /// trivial type fields
 

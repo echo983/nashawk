@@ -116,6 +116,7 @@ export class Inspector extends EventTarget {
       ['usenet_servable', 'Servable:'],
       ['usenet_local', 'Local pieces:'],
       ['usenet_states', 'States:'],
+      ['usenet_integrity', 'Integrity:'],
     ];
     for (const [name, text] of rows) {
       elements[name] = append_row(text);
@@ -480,12 +481,14 @@ export class Inspector extends EventTarget {
       setTextContent(e.info.usenet_servable, none);
       setTextContent(e.info.usenet_local, none);
       setTextContent(e.info.usenet_states, none);
+      setTextContent(e.info.usenet_integrity, none);
     } else if (torrents.length > 1) {
       setTextContent(e.info.usenet_eligible, mixed);
       setTextContent(e.info.usenet_manifest, mixed);
       setTextContent(e.info.usenet_servable, mixed);
       setTextContent(e.info.usenet_local, mixed);
       setTextContent(e.info.usenet_states, mixed);
+      setTextContent(e.info.usenet_integrity, mixed);
     } else {
       const summary = torrents[0].getUsenetPieceSummary();
       if (isUsenetDebugEnabled()) {
@@ -517,10 +520,27 @@ export class Inspector extends EventTarget {
         setTextContent(
           e.info.usenet_states,
           `${fmt.number(summary.available ?? 0)} available, ${fmt.number(
+            summary.verified ?? 0,
+          )} verified, ${fmt.number(
             summary.uploading ?? 0,
           )} uploading, ${fmt.number(summary.failed ?? 0)} failed, ${fmt.number(
             summary.unknown ?? 0,
           )} unknown`,
+        );
+        const { integrity } = summary;
+        setTextContent(
+          e.info.usenet_integrity,
+          integrity
+            ? `${integrity.status ?? 'unknown'}: ${fmt.number(
+                integrity.verified ?? 0,
+              )} verified, ${fmt.number(
+                integrity.missing ?? 0,
+              )} missing, ${fmt.number(
+                integrity.repairing ?? 0,
+              )} repairing, ${fmt.number(
+                integrity.waiting_for_peers ?? 0,
+              )} waiting for peers`
+            : unknown,
         );
       } else {
         setTextContent(e.info.usenet_eligible, unknown);
@@ -528,6 +548,7 @@ export class Inspector extends EventTarget {
         setTextContent(e.info.usenet_servable, unknown);
         setTextContent(e.info.usenet_local, unknown);
         setTextContent(e.info.usenet_states, unknown);
+        setTextContent(e.info.usenet_integrity, unknown);
       }
     }
 

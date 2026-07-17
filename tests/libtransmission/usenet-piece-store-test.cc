@@ -56,6 +56,17 @@ TEST_F(UsenetPieceStoreTest, stateNamesRoundtrip)
     }
 
     EXPECT_FALSE(tr_usenet_discovery_state_from_name("not-a-discovery-state"sv));
+
+    for (auto const state : { tr_usenet_integrity_state::NotChecked,
+                              tr_usenet_integrity_state::Checking,
+                              tr_usenet_integrity_state::Repairing,
+                              tr_usenet_integrity_state::Ready,
+                              tr_usenet_integrity_state::Incomplete,
+                              tr_usenet_integrity_state::Error })
+    {
+        EXPECT_EQ(state, tr_usenet_integrity_state_from_name(tr_usenet_integrity_state_name(state)));
+    }
+    EXPECT_FALSE(tr_usenet_integrity_state_from_name("not-an-integrity-state"sv));
 }
 
 TEST_F(UsenetPieceStoreTest, multipartMessageIdsAreDeterministicAndBounded)
@@ -106,6 +117,7 @@ TEST_F(UsenetPieceStoreTest, evictionEligibilityRequiresAvailableLocalOldPiece)
     auto entry = tr_usenet_piece_entry{
         .state = tr_usenet_piece_state::Available,
         .available_at = 100U,
+        .verified_at = 100U,
         .last_local_at = 100U,
         .message_id = "piece@nashawk.local",
     };
@@ -114,6 +126,10 @@ TEST_F(UsenetPieceStoreTest, evictionEligibilityRequiresAvailableLocalOldPiece)
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, false, 200U, 60U));
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 120U, 60U));
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 99U, 60U));
+
+    entry.verified_at = 0U;
+    EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 200U, 60U));
+    entry.verified_at = 100U;
 
     entry.last_local_at = 180U;
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 200U, 60U));
@@ -163,6 +179,27 @@ TEST_F(UsenetPieceStoreTest, savesPieceState)
     EXPECT_TRUE(loaded->is_available(0));
     EXPECT_GT(loaded->pieces[0].available_at, 0U);
     EXPECT_GT(loaded->pieces[0].last_local_at, 0U);
+    EXPECT_EQ(0U, loaded->pieces[0].verified_at);
+}
+
+TEST_F(UsenetPieceStoreTest, verifiedCredentialRoundtripsAndAppliesToDuplicateMessageIds)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+
+    auto manifest = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(manifest);
+    ASSERT_GE(manifest->piece_count(), 2U);
+    manifest->pieces[1].message_id = manifest->pieces[0].message_id;
+    manifest->set_message_id_state(manifest->pieces[0].message_id, tr_usenet_piece_state::Available);
+    manifest->mark_message_id_verified(manifest->pieces[0].message_id, 12345U);
+    ASSERT_TRUE(store.save(*manifest));
+
+    auto loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(12345U, loaded->pieces[0].verified_at);
+    EXPECT_EQ(12345U, loaded->pieces[1].verified_at);
 }
 
 TEST_F(UsenetPieceStoreTest, discoveryMetadataRoundtrips)
@@ -208,6 +245,40 @@ TEST_F(UsenetPieceStoreTest, discoverySamplePiecesAreDeterministicBoundedAndUsef
     EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U }), tr_usenet_discovery_sample_pieces("hash"sv, 1U, 16U));
     EXPECT_TRUE(std::empty(tr_usenet_discovery_sample_pieces("hash"sv, 100U, 0U)));
     EXPECT_TRUE(std::empty(tr_usenet_discovery_sample_pieces("hash"sv, 0U, 16U)));
+}
+
+TEST_F(UsenetPieceStoreTest, integrityMetadataRoundtrips)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+
+    auto manifest = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(manifest);
+    manifest->integrity = {
+        .state = tr_usenet_integrity_state::Repairing,
+        .started_at = 100U,
+        .finished_at = 200U,
+        .checked = 8U,
+        .verified = 6U,
+        .missing = 2U,
+        .repairing = 1U,
+        .waiting_for_peers = 1U,
+        .error = "piece unavailable",
+    };
+    ASSERT_TRUE(store.save(*manifest));
+
+    auto loaded = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(tr_usenet_integrity_state::Repairing, loaded->integrity.state);
+    EXPECT_EQ(100U, loaded->integrity.started_at);
+    EXPECT_EQ(200U, loaded->integrity.finished_at);
+    EXPECT_EQ(8U, loaded->integrity.checked);
+    EXPECT_EQ(6U, loaded->integrity.verified);
+    EXPECT_EQ(2U, loaded->integrity.missing);
+    EXPECT_EQ(1U, loaded->integrity.repairing);
+    EXPECT_EQ(1U, loaded->integrity.waiting_for_peers);
+    EXPECT_EQ("piece unavailable"sv, loaded->integrity.error);
 }
 
 TEST_F(UsenetPieceStoreTest, notePieceLocalActivityUpdatesTimestamp)
@@ -330,6 +401,8 @@ TEST_F(UsenetPieceStoreTest, manifestVersionTwoNormalizesUnknownChainMetadata)
     ASSERT_EQ(1U, loaded->piece_count());
     EXPECT_EQ(0U, loaded->pieces[0].article_count);
     EXPECT_EQ(0U, loaded->pieces[0].article_payload_size);
+    EXPECT_EQ(0U, loaded->pieces[0].verified_at);
+    EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(loaded->pieces[0], true, 1000U, 0U));
 }
 
 TEST_F(UsenetPieceStoreTest, rejectsUnsupportedManifestVersionAndArticleCount)
@@ -342,7 +415,8 @@ TEST_F(UsenetPieceStoreTest, rejectsUnsupportedManifestVersionAndArticleCount)
     {
         auto file = std::ofstream{ path };
         file << fmt::format(
-            R"({{"version":3,"hash_string":"{}","piece_count":1,"piece_size":{},"pieces":[{{"status":"available","message_id":"{}"}}]}})",
+            R"({{"version":{},"hash_string":"{}","piece_count":1,"piece_size":{},"pieces":[{{"status":"available","message_id":"{}"}}]}})",
+            TrUsenetPieceManifestVersion + 1U,
             metainfo.info_hash_string(),
             metainfo.piece_size(),
             message_id);

@@ -49,6 +49,11 @@ auto constexpr Domain = "nashawk.local"sv;
     return tr_quark_new("last_local_at"sv);
 }
 
+[[nodiscard]] tr_quark key_verified_at()
+{
+    return tr_quark_new("verified_at"sv);
+}
+
 [[nodiscard]] tr_quark key_checked_at()
 {
     return tr_quark_new("checked_at"sv);
@@ -62,6 +67,46 @@ auto constexpr Domain = "nashawk.local"sv;
 [[nodiscard]] tr_quark key_error()
 {
     return tr_quark_new("error"sv);
+}
+
+[[nodiscard]] tr_quark key_integrity()
+{
+    return tr_quark_new("integrity"sv);
+}
+
+[[nodiscard]] tr_quark key_started_at()
+{
+    return tr_quark_new("started_at"sv);
+}
+
+[[nodiscard]] tr_quark key_finished_at()
+{
+    return tr_quark_new("finished_at"sv);
+}
+
+[[nodiscard]] tr_quark key_checked()
+{
+    return tr_quark_new("checked"sv);
+}
+
+[[nodiscard]] tr_quark key_verified()
+{
+    return tr_quark_new("verified"sv);
+}
+
+[[nodiscard]] tr_quark key_missing()
+{
+    return tr_quark_new("missing"sv);
+}
+
+[[nodiscard]] tr_quark key_repairing()
+{
+    return tr_quark_new("repairing"sv);
+}
+
+[[nodiscard]] tr_quark key_waiting_for_peers()
+{
+    return tr_quark_new("waiting_for_peers"sv);
 }
 
 [[nodiscard]] tr_quark key_max_article_size()
@@ -126,6 +171,23 @@ auto constexpr Domain = "nashawk.local"sv;
     discovery.try_emplace(key_sampled_pieces(), std::move(sampled_pieces));
     top.try_emplace(key_discovery(), std::move(discovery));
 
+    auto integrity = tr_variant::Map{ 9U };
+    integrity.try_emplace(
+        TR_KEY_status,
+        tr_variant::unmanaged_string(tr_usenet_integrity_state_name(manifest.integrity.state)));
+    integrity.try_emplace(key_started_at(), static_cast<int64_t>(manifest.integrity.started_at));
+    integrity.try_emplace(key_finished_at(), static_cast<int64_t>(manifest.integrity.finished_at));
+    integrity.try_emplace(key_checked(), static_cast<int64_t>(manifest.integrity.checked));
+    integrity.try_emplace(key_verified(), static_cast<int64_t>(manifest.integrity.verified));
+    integrity.try_emplace(key_missing(), static_cast<int64_t>(manifest.integrity.missing));
+    integrity.try_emplace(key_repairing(), static_cast<int64_t>(manifest.integrity.repairing));
+    integrity.try_emplace(key_waiting_for_peers(), static_cast<int64_t>(manifest.integrity.waiting_for_peers));
+    if (!std::empty(manifest.integrity.error))
+    {
+        integrity.try_emplace(key_error(), manifest.integrity.error);
+    }
+    top.try_emplace(key_integrity(), std::move(integrity));
+
     auto pieces = tr_variant::Vector{};
     pieces.reserve(std::size(manifest.pieces));
     for (auto const& piece : manifest.pieces)
@@ -140,6 +202,10 @@ auto constexpr Domain = "nashawk.local"sv;
         if (piece.last_local_at != 0U)
         {
             entry.try_emplace(key_last_local_at(), static_cast<int64_t>(piece.last_local_at));
+        }
+        if (piece.verified_at != 0U)
+        {
+            entry.try_emplace(key_verified_at(), static_cast<int64_t>(piece.verified_at));
         }
         if (piece.article_count != 0U)
         {
@@ -245,6 +311,58 @@ auto constexpr Domain = "nashawk.local"sv;
         }
     }
 
+    if (auto const* integrity = top->find_if<tr_variant::Map>(key_integrity()); integrity != nullptr)
+    {
+        if (auto const status = integrity->value_if<std::string_view>(TR_KEY_status); status)
+        {
+            auto const state = tr_usenet_integrity_state_from_name(*status);
+            if (!state)
+            {
+                return {};
+            }
+            manifest.integrity.state = *state;
+        }
+
+        auto read_count = [integrity](tr_quark const key, size_t& setme) -> bool
+        {
+            if (auto const value = integrity->value_if<int64_t>(key); value)
+            {
+                if (*value < 0)
+                {
+                    return false;
+                }
+                setme = static_cast<size_t>(*value);
+            }
+            return true;
+        };
+        auto read_time = [integrity](tr_quark const key, uint64_t& setme) -> bool
+        {
+            if (auto const value = integrity->value_if<int64_t>(key); value)
+            {
+                if (*value < 0)
+                {
+                    return false;
+                }
+                setme = static_cast<uint64_t>(*value);
+            }
+            return true;
+        };
+        if (!read_time(key_started_at(), manifest.integrity.started_at) ||
+            !read_time(key_finished_at(), manifest.integrity.finished_at) ||
+            !read_count(key_checked(), manifest.integrity.checked) ||
+            !read_count(key_verified(), manifest.integrity.verified) ||
+            !read_count(key_missing(), manifest.integrity.missing) ||
+            !read_count(key_repairing(), manifest.integrity.repairing) ||
+            !read_count(key_waiting_for_peers(), manifest.integrity.waiting_for_peers))
+        {
+            return {};
+        }
+        if (auto const error = integrity->value_if<std::string_view>(key_error()); error)
+        {
+            manifest.integrity.error = *error;
+        }
+    }
+
     manifest.pieces.reserve(std::size(*pieces));
     for (auto const& var : *pieces)
     {
@@ -280,6 +398,11 @@ auto constexpr Domain = "nashawk.local"sv;
         if (auto const last_local_at = entry->value_if<int64_t>(key_last_local_at()); last_local_at && *last_local_at > 0)
         {
             piece.last_local_at = static_cast<uint64_t>(*last_local_at);
+        }
+
+        if (auto const verified_at = entry->value_if<int64_t>(key_verified_at()); verified_at && *verified_at > 0)
+        {
+            piece.verified_at = static_cast<uint64_t>(*verified_at);
         }
 
         if (auto const article_count = entry->value_if<int64_t>(key_article_count()); article_count)
@@ -478,6 +601,45 @@ std::optional<tr_usenet_discovery_state> tr_usenet_discovery_state_from_name(std
     return {};
 }
 
+std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state const state) noexcept
+{
+    switch (state)
+    {
+    case tr_usenet_integrity_state::NotChecked:
+        return "not_checked"sv;
+    case tr_usenet_integrity_state::Checking:
+        return "checking"sv;
+    case tr_usenet_integrity_state::Repairing:
+        return "repairing"sv;
+    case tr_usenet_integrity_state::Ready:
+        return "ready"sv;
+    case tr_usenet_integrity_state::Incomplete:
+        return "incomplete"sv;
+    case tr_usenet_integrity_state::Error:
+        return "error"sv;
+    }
+
+    return "error"sv;
+}
+
+std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view const name) noexcept
+{
+    for (auto const state : { tr_usenet_integrity_state::NotChecked,
+                              tr_usenet_integrity_state::Checking,
+                              tr_usenet_integrity_state::Repairing,
+                              tr_usenet_integrity_state::Ready,
+                              tr_usenet_integrity_state::Incomplete,
+                              tr_usenet_integrity_state::Error })
+    {
+        if (name == tr_usenet_integrity_state_name(state))
+        {
+            return state;
+        }
+    }
+
+    return {};
+}
+
 std::vector<tr_piece_index_t> tr_usenet_discovery_sample_pieces(
     std::string_view const info_hash_string,
     tr_piece_index_t const piece_count,
@@ -538,7 +700,8 @@ bool tr_usenet_piece_is_eviction_eligible(
     uint64_t const now_seconds,
     uint64_t const min_age_seconds) noexcept
 {
-    if (!has_local_piece || entry.state != tr_usenet_piece_state::Available || entry.available_at == 0U)
+    if (!has_local_piece || entry.state != tr_usenet_piece_state::Available || entry.available_at == 0U ||
+        entry.verified_at == 0U)
     {
         return false;
     }
@@ -608,6 +771,7 @@ void tr_usenet_piece_manifest::set_piece_state(
             }
             entry.article_count = 0U;
             entry.article_payload_size = 0U;
+            entry.verified_at = 0U;
         }
 
         if (state == tr_usenet_piece_state::Available && article_count)
@@ -640,6 +804,17 @@ void tr_usenet_piece_manifest::set_all_piece_states(tr_usenet_piece_state const 
     for (tr_piece_index_t piece = 0U; piece < std::size(pieces); ++piece)
     {
         set_piece_state(piece, state);
+    }
+}
+
+void tr_usenet_piece_manifest::mark_message_id_verified(std::string_view const message_id, uint64_t const verified_at)
+{
+    for (auto& piece : pieces)
+    {
+        if (piece.message_id == message_id && piece.state == tr_usenet_piece_state::Available)
+        {
+            piece.verified_at = verified_at;
+        }
     }
 }
 
@@ -775,6 +950,31 @@ std::optional<std::string> tr_usenet_piece_store::note_piece_local_activity(
     }
 
     manifest->pieces[piece].last_local_at = now_seconds();
+    if (!save(*manifest))
+    {
+        return "Could not save Usenet piece manifest";
+    }
+
+    return {};
+}
+
+std::optional<std::string> tr_usenet_piece_store::mark_message_id_verified(
+    std::string_view const info_hash_string,
+    std::string_view const message_id,
+    uint64_t const verified_at) const
+{
+    auto manifest = load(info_hash_string);
+    if (!manifest)
+    {
+        return "Usenet manifest is missing";
+    }
+
+    if (std::empty(message_id) || verified_at == 0U)
+    {
+        return "Usenet verification credential is invalid";
+    }
+
+    manifest->mark_message_id_verified(message_id, verified_at);
     if (!save(*manifest))
     {
         return "Could not save Usenet piece manifest";

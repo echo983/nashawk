@@ -233,6 +233,9 @@ export class Transmission extends EventTarget {
         case 'verify-selected-torrents':
           this._verifyTorrents(this.getSelectedTorrents());
           break;
+        case 'verify-selected-usenet':
+          this._verifyUsenetTorrents(this.getSelectedTorrents());
+          break;
         default:
           console.warn(`unhandled action: ${event_.action}`);
       }
@@ -1114,6 +1117,13 @@ TODO: fix this when notifications get fixed
   }
   _verifyTorrents(torrents) {
     this.remote.verifyTorrents(
+      Transmission._getTorrentIds(torrents),
+      this.refreshTorrents,
+      this,
+    );
+  }
+  _verifyUsenetTorrents(torrents) {
+    this.remote.verifyUsenetTorrents(
       Transmission._getTorrentIds(torrents),
       this.refreshTorrents,
       this,

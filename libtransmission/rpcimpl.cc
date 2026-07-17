@@ -455,6 +455,23 @@ void notifyBatchQueueChange(tr_session* session, std::vector<tr_torrent*> const&
     return { JsonRpc::Error::SUCCESS, std::string{} };
 }
 
+[[nodiscard]] std::pair<JsonRpc::Error::Code, std::string> torrentUsenetVerify(
+    tr_session* session,
+    tr_variant::Map const& args_in,
+    tr_variant::Map& /*args_out*/)
+{
+    for (auto* tor : getTorrents(session, args_in))
+    {
+        if (auto error = session->queueUsenetIntegrityAudit(*tor, true); error)
+        {
+            return { JsonRpc::Error::INVALID_PARAMS, std::move(*error) };
+        }
+        session->rpcNotify(TR_RPC_TORRENT_CHANGED, tor->id());
+    }
+
+    return { JsonRpc::Error::SUCCESS, std::string{} };
+}
+
 // ---
 
 namespace make_torrent_field_helpers
@@ -809,6 +826,7 @@ namespace make_torrent_field_helpers
     map.try_emplace(TR_KEY_unknown, summary.unknown);
     map.try_emplace(TR_KEY_uploading, summary.uploading);
     map.try_emplace(TR_KEY_available, summary.available);
+    map.try_emplace(tr_quark_new("verified"sv), summary.verified);
     map.try_emplace(TR_KEY_failed, summary.failed);
     map.try_emplace(TR_KEY_servable, summary.servable);
 
@@ -829,6 +847,21 @@ namespace make_torrent_field_helpers
     }
     discovery.try_emplace(tr_quark_new("sampled_pieces"sv), std::move(sampled_pieces));
     map.try_emplace(tr_quark_new("discovery"sv), std::move(discovery));
+
+    auto integrity = tr_variant::Map{ 9U };
+    integrity.try_emplace(TR_KEY_status, tr_variant::unmanaged_string(tr_usenet_integrity_state_name(summary.integrity.state)));
+    integrity.try_emplace(tr_quark_new("started_at"sv), static_cast<int64_t>(summary.integrity.started_at));
+    integrity.try_emplace(tr_quark_new("finished_at"sv), static_cast<int64_t>(summary.integrity.finished_at));
+    integrity.try_emplace(tr_quark_new("checked"sv), summary.integrity.checked);
+    integrity.try_emplace(tr_quark_new("verified"sv), summary.integrity.verified);
+    integrity.try_emplace(tr_quark_new("missing"sv), summary.integrity.missing);
+    integrity.try_emplace(tr_quark_new("repairing"sv), summary.integrity.repairing);
+    integrity.try_emplace(tr_quark_new("waiting_for_peers"sv), summary.integrity.waiting_for_peers);
+    if (!std::empty(summary.integrity.error))
+    {
+        integrity.try_emplace(tr_quark_new("error"sv), summary.integrity.error);
+    }
+    map.try_emplace(tr_quark_new("integrity"sv), std::move(integrity));
 
     return tr_variant{ std::move(map) };
 }
@@ -2900,7 +2933,7 @@ using SessionAccessors = std::pair<SessionGetter, SessionSetter>;
 
 using SyncHandler = std::pair<JsonRpc::Error::Code, std::string> (*)(tr_session*, tr_variant::Map const&, tr_variant::Map&);
 
-auto const sync_handlers = small::max_size_map<tr_quark, std::pair<SyncHandler, bool /*has_side_effects*/>, 20U>{ {
+auto const sync_handlers = small::max_size_map<tr_quark, std::pair<SyncHandler, bool /*has_side_effects*/>, 21U>{ {
     { TR_KEY_free_space, { freeSpace, false } },
     { TR_KEY_group_get, { groupGet, false } },
     { TR_KEY_group_set, { groupSet, true } },
@@ -2920,6 +2953,7 @@ auto const sync_handlers = small::max_size_map<tr_quark, std::pair<SyncHandler, 
     { TR_KEY_torrent_start, { torrentStart, true } },
     { TR_KEY_torrent_start_now, { torrentStartNow, true } },
     { TR_KEY_torrent_stop, { torrentStop, true } },
+    { TR_KEY_torrent_usenet_verify, { torrentUsenetVerify, true } },
     { TR_KEY_torrent_verify, { torrentVerify, true } },
 } };
 
