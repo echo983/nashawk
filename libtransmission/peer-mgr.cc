@@ -410,6 +410,7 @@ public:
 
         [[nodiscard]] auto next(size_t const n_wanted_blocks, std::function<bool(tr_piece_index_t)> const& peer_has_piece)
         {
+            usenet_pieces_ = tor_.session->usenetPieceAvailability(tor_);
             return wishlist_.next(n_wanted_blocks, peer_has_piece);
         }
 
@@ -420,7 +421,7 @@ public:
 
         [[nodiscard]] bool client_has_piece(tr_piece_index_t const piece) const override
         {
-            return tor_.has_blocks(block_span(piece));
+            return tor_.has_blocks(block_span(piece)) || usenet_pieces_.test(piece);
         }
 
         [[nodiscard]] bool client_wants_piece(tr_piece_index_t const piece) const override
@@ -466,6 +467,7 @@ public:
     private:
         tr_torrent& tor_;
         tr_swarm& swarm_;
+        tr_bitfield usenet_pieces_{ 0U };
         Wishlist wishlist_;
         std::array<sigslot::scoped_connection, 15U> signal_tags_; // depends-on: wishlist_
     };
@@ -1834,12 +1836,13 @@ void updateInterest(tr_swarm* swarm)
     if (auto const& peers = swarm->peers; !std::empty(peers))
     {
         auto const n = tor->piece_count();
+        auto const usenet_pieces = tor->session->usenetPieceAvailability(*tor);
 
         // build a bitfield of interesting pieces...
         auto piece_is_interesting = std::vector<bool>(n);
         for (tr_piece_index_t i = 0U; i < n; ++i)
         {
-            piece_is_interesting[i] = tor->piece_is_wanted(i) && !tor->has_piece(i);
+            piece_is_interesting[i] = tor->piece_is_wanted(i) && !tor->has_piece(i) && !usenet_pieces.test(i);
         }
 
         for (auto const& peer : peers)

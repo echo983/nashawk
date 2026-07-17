@@ -2569,6 +2569,12 @@ tr_session::tr_session(std::string_view config_dir, tr_variant const& settings_d
     , queue_timer_{ timer_maker_->create([this]() { on_queue_timer(); }) }
     , save_timer_{ timer_maker_->create([this]() { on_save_timer(); }) }
     , usenet_eviction_timer_{ timer_maker_->create([this]() { scanUsenetEvictionCandidates(); }) }
+    , usenet_eviction_trigger_timer_{ timer_maker_->create(
+          [this]()
+          {
+              usenet_eviction_scan_pending_ = false;
+              scanUsenetEvictionCandidates();
+          }) }
 {
     now_timer_->start_repeating(1s);
     queue_timer_->start_repeating(QueueInterval);
@@ -2850,25 +2856,15 @@ bool tr_session::isUsenetServableComplete(tr_torrent const& tor)
         return false;
     }
 
-    auto manifest = std::optional<tr_usenet_piece_manifest>{};
-    {
-        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-        if (!usenet_piece_store_->is_piece_size_eligible(tor.piece_size()))
-        {
-            return false;
-        }
-
-        manifest = usenet_piece_store_->load(tor.info_hash_string());
-    }
-
-    if (!manifest || manifest->piece_count() < tor.piece_count())
+    if (!usenet_piece_store_->is_piece_size_eligible(tor.piece_size()))
     {
         return false;
     }
 
+    auto const available = usenetPieceAvailability(tor);
     for (tr_piece_index_t piece = 0; piece < tor.piece_count(); ++piece)
     {
-        if (!tor.has_piece(piece) && !manifest->is_available(piece))
+        if (!tor.has_piece(piece) && !available.test(piece))
         {
             return false;
         }
@@ -3019,6 +3015,17 @@ void tr_session::startUsenetEvictionTimer()
     scanUsenetEvictionCandidates();
 }
 
+void tr_session::scheduleUsenetEvictionScan()
+{
+    if (usenet_eviction_scan_pending_ || usenet_piece_store_ == nullptr || !settings_.usenet_eviction_enabled)
+    {
+        return;
+    }
+
+    usenet_eviction_scan_pending_ = true;
+    usenet_eviction_trigger_timer_->start_single_shot(1s);
+}
+
 void tr_session::scanUsenetEvictionCandidates()
 {
     if (usenet_piece_store_ == nullptr || !settings_.usenet_eviction_enabled)
@@ -3055,6 +3062,7 @@ void tr_session::scanUsenetEvictionCandidates()
         {
             continue;
         }
+        cacheUsenetPieceAvailability(*tor, *manifest);
         if (!tr_usenet_manifest_allows_eviction(manifest->integrity.state, settings_.usenet_evict_after_readback))
         {
             continue;
@@ -3171,25 +3179,97 @@ void tr_session::releaseUsenetIoSlots(size_t const count)
 
 void tr_session::addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield)
 {
-    if (usenet_piece_store_ == nullptr || !tor.has_metainfo())
+    auto const available = usenetPieceAvailability(tor);
+    auto const piece_count = std::min<size_t>(tor.piece_count(), available.size());
+    for (size_t piece = 0; piece < piece_count; ++piece)
     {
-        return;
-    }
-
-    auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-    auto const manifest = usenet_piece_store_->load(tor.info_hash_string());
-    if (!manifest)
-    {
-        return;
-    }
-
-    auto const piece_count = std::min<tr_piece_index_t>(tor.piece_count(), manifest->piece_count());
-    for (tr_piece_index_t piece = 0; piece < piece_count; ++piece)
-    {
-        if (manifest->is_available(piece))
+        if (available.test(piece))
         {
             bitfield[piece / 8U] |= static_cast<uint8_t>(uint8_t{ 0x80U } >> (piece % 8U));
         }
+    }
+}
+
+tr_bitfield tr_session::usenetPieceAvailability(tr_torrent const& tor)
+{
+    auto available = tr_bitfield{ tor.has_metainfo() ? tor.piece_count() : 0U };
+    if (usenet_piece_store_ == nullptr || !tor.has_metainfo())
+    {
+        return available;
+    }
+
+    auto const info_hash_string = std::string{ tor.info_hash_string() };
+    auto const now = std::chrono::steady_clock::now();
+    {
+        auto lock = std::lock_guard{ usenet_piece_availability_mutex_ };
+        auto const iter = std::ranges::find(
+            usenet_piece_availability_cache_,
+            info_hash_string,
+            &UsenetPieceAvailabilityCache::info_hash_string);
+        if (iter != std::end(usenet_piece_availability_cache_) && iter->piece_count == tor.piece_count() &&
+            now - iter->updated_at < 2s)
+        {
+            available.set_raw(std::data(iter->raw), std::size(iter->raw));
+            return available;
+        }
+    }
+
+    auto manifest = std::optional<tr_usenet_piece_manifest>{};
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        manifest = usenet_piece_store_->load(info_hash_string);
+    }
+    if (!manifest)
+    {
+        return available;
+    }
+
+    cacheUsenetPieceAvailability(tor, *manifest);
+
+    auto lock = std::lock_guard{ usenet_piece_availability_mutex_ };
+    auto const iter = std::ranges::find(
+        usenet_piece_availability_cache_,
+        info_hash_string,
+        &UsenetPieceAvailabilityCache::info_hash_string);
+    if (iter != std::end(usenet_piece_availability_cache_))
+    {
+        available.set_raw(std::data(iter->raw), std::size(iter->raw));
+    }
+
+    return available;
+}
+
+void tr_session::cacheUsenetPieceAvailability(tr_torrent const& tor, tr_usenet_piece_manifest const& manifest)
+{
+    auto available = tr_bitfield{ tor.piece_count() };
+
+    auto const piece_count = std::min<tr_piece_index_t>(tor.piece_count(), manifest.piece_count());
+    for (tr_piece_index_t piece = 0; piece < piece_count; ++piece)
+    {
+        if (manifest.is_available(piece))
+        {
+            available.set(piece);
+        }
+    }
+
+    auto entry = UsenetPieceAvailabilityCache{
+        .info_hash_string = std::string{ tor.info_hash_string() },
+        .raw = available.raw(),
+        .piece_count = tor.piece_count(),
+        .updated_at = std::chrono::steady_clock::now(),
+    };
+    auto lock = std::lock_guard{ usenet_piece_availability_mutex_ };
+    auto const iter = std::ranges::find(
+        usenet_piece_availability_cache_,
+        entry.info_hash_string,
+        &UsenetPieceAvailabilityCache::info_hash_string);
+    if (iter == std::end(usenet_piece_availability_cache_))
+    {
+        usenet_piece_availability_cache_.push_back(std::move(entry));
+    }
+    else
+    {
+        *iter = std::move(entry);
     }
 }
 
@@ -4572,7 +4652,7 @@ void tr_session::onUsenetPieceUploadFinished(
             }
         }
         tr_logAddTrace(fmt::format("Usenet upload completed for piece {}", piece));
-        scanUsenetEvictionCandidates();
+        scheduleUsenetEvictionScan();
         if (auto const digest = tr_sha1_from_string(info_hash_string); digest)
         {
             if (auto* const tor = torrents_.get(*digest); tor != nullptr)

@@ -74,6 +74,7 @@
 
 tr_peer_id_t tr_peerIdInit();
 
+class tr_bitfield;
 class tr_peer_socket;
 class tr_usenet_piece_store;
 struct tr_pex;
@@ -1074,6 +1075,7 @@ public:
     void queueUsenetUploadsForLocalPieces(tr_torrent const& tor);
     [[nodiscard]] bool hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
     [[nodiscard]] bool isUsenetServableComplete(tr_torrent const& tor);
+    [[nodiscard]] tr_bitfield usenetPieceAvailability(tr_torrent const& tor);
     void addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield);
     void fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
     void onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t piece);
@@ -1285,7 +1287,20 @@ private:
     void releaseUsenetIoSlots(size_t count);
     [[nodiscard]] size_t usenetIoLimit() const;
     void startUsenetEvictionTimer();
+    void scheduleUsenetEvictionScan();
     void scanUsenetEvictionCandidates();
+    void cacheUsenetPieceAvailability(tr_torrent const& tor, tr_usenet_piece_manifest const& manifest);
+
+    struct UsenetPieceAvailabilityCache
+    {
+        std::string info_hash_string;
+        std::vector<uint8_t> raw;
+        size_t piece_count = 0U;
+        std::chrono::steady_clock::time_point updated_at;
+    };
+
+    std::mutex usenet_piece_availability_mutex_;
+    std::vector<UsenetPieceAvailabilityCache> usenet_piece_availability_cache_;
 
     std::mutex usenet_io_mutex_;
     std::condition_variable usenet_io_cv_;
@@ -1558,6 +1573,8 @@ private:
     std::unique_ptr<tr::Timer> save_timer_;
 
     std::unique_ptr<tr::Timer> usenet_eviction_timer_;
+    std::unique_ptr<tr::Timer> usenet_eviction_trigger_timer_;
+    bool usenet_eviction_scan_pending_ = false;
 
     std::unique_ptr<tr_verify_worker> verifier_ = std::make_unique<tr_verify_worker>();
 
