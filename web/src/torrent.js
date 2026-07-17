@@ -325,16 +325,9 @@ export class Torrent extends EventTarget {
     const unknown = summary.unknown ?? 0;
     const integrity = summary.integrity?.status ?? 'not_checked';
     const servablePercent = Math.min(servable / pieceCount, 1);
+    const usenetPercent = Math.min(available / pieceCount, 1);
 
     if (servable >= pieceCount) {
-      if (local >= pieceCount) {
-        return {
-          label: 'Local',
-          state: 'local',
-          title: 'All pieces are currently stored locally',
-        };
-      }
-
       if (integrity === 'checking') {
         return {
           label: 'Verifying Usenet',
@@ -366,6 +359,23 @@ export class Torrent extends EventTarget {
           percent: servablePercent,
           state: 'usenet-unverified',
           title: 'Usenet repair is waiting for missing pieces from peers',
+        };
+      }
+
+      if (available < pieceCount) {
+        return {
+          label: `Usenet Upload ${Formatter.percentString(100 * usenetPercent, 1)}%`,
+          percent: usenetPercent,
+          state: 'usenet-uploading',
+          title: `${available} of ${pieceCount} pieces are confirmed on Usenet; ${uploading} uploading, ${failed} failed`,
+        };
+      }
+
+      if (local >= pieceCount) {
+        return {
+          label: 'Local',
+          state: 'local',
+          title: 'All pieces are currently stored locally',
         };
       }
 

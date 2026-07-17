@@ -393,6 +393,10 @@ Discovery IO shares the same Usenet IO limit as upload and download work.
 
 ## Web UI And RPC Observability
 
+The stable Nashawk RPC field contract, examples, completion predicates, polling
+guidance, and security boundary are documented in
+[Nashawk Usenet RPC](Usenet-RPC.md).
+
 The Web UI exposes Usenet status and bounded maintenance actions without
 exposing secrets.
 
