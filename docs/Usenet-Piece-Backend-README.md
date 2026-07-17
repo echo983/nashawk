@@ -11,9 +11,9 @@ Transmission behavior.
 
 ## Status
 
-This backend is functional but experimental. The first implementation has been
-validated with local two-daemon BitTorrent tests and real Usenet upload/read
-paths.
+This backend is functional but experimental. The implementation has been
+validated with local two-daemon BitTorrent tests, real Usenet upload/read paths,
+multipart articles, full integrity audits, repair, and verified local eviction.
 
 Current field-test details are recorded in
 `archive/Usenet-Backend-Test-Status-2026-07-11.md`, including the Node/Nyuu ABI
@@ -39,6 +39,14 @@ Validated paths:
 - mandatory independent readback before an uploaded piece becomes evictable
 - full torrent-level Usenet integrity audits with repair and BitTorrent fallback
 - manual `Verify Usenet data` action in the Web UI torrent context menu
+- automatic full integrity audit before the first Usenet Ready transition
+- immediate eviction eligibility after mandatory remote readback succeeds
+- startup validation through the same Nyuu upload and piece download path used
+  by normal operation
+
+The integrity repair milestone passed all 619 enabled CTest cases and repeated
+real-provider startup upload/readback checks on 2026-07-17. Eleven upstream
+tests remained disabled by the project's normal test configuration.
 
 Current limits:
 
@@ -59,6 +67,9 @@ Current limits:
   are future work.
 - End-to-end Usenet tests are currently manual, not CI automation.
 - Windows startup support for this mode is not implemented.
+
+Prioritized remaining work is tracked in the
+[Usenet Backend Roadmap](Usenet-Backend-Roadmap.md).
 
 ## Storage Model
 

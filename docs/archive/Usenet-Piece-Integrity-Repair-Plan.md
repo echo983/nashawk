@@ -1,6 +1,6 @@
 # Usenet Piece Integrity And Repair Plan
 
-Status: Initial implementation complete on `fix/usenet-piece-integrity-repair`.
+Status: Completed, validated, and merged into `main` on 2026-07-17.
 
 Implemented so far:
 
@@ -146,7 +146,8 @@ of retaining a Ready label.
 
 The first and last items are implemented. Stabilization delay, freshness-window
 readback, periodic audits, and retry backoff are intentionally deferred until
-real-provider behavior and load are measured.
+real-provider behavior and load are measured. Deferred work is tracked in the
+active [Usenet Backend Roadmap](../Usenet-Backend-Roadmap.md).
 
 ## Delivery Order
 
@@ -201,9 +202,9 @@ Current validation result:
 - the real-provider test daemon was stopped cleanly and no credentials or test
   bodies were added to Git.
 
-## Merge Gate
+## Merge Gate (Satisfied)
 
-The branch is not mergeable until:
+The implementation was merged after satisfying these gates:
 
 - no sampled or legacy state can authorize eviction;
 - every new eviction candidate has passed complete remote hash verification;

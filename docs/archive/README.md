@@ -16,4 +16,5 @@ Archived documents:
 - [Usenet Piece Discovery Plan](Usenet-Piece-Discovery-Plan.md)
 - [Usenet Multipart Piece Design](Usenet-Multipart-Piece-Design.md)
 - [Usenet Multipart Piece Implementation Plan](Usenet-Multipart-Piece-Implementation-Plan.md)
+- [Usenet Piece Integrity Repair Plan](Usenet-Piece-Integrity-Repair-Plan.md)
 - [Usenet Backend Test Status - 2026-07-11](Usenet-Backend-Test-Status-2026-07-11.md)
