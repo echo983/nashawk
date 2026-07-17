@@ -1075,9 +1075,9 @@ private:
 [[nodiscard]] std::string make_payload(size_t const size)
 {
     auto payload = std::string(size, '\0');
-    for (size_t i = 0; i < size; ++i)
+    if (!std::empty(payload))
     {
-        payload[i] = static_cast<char>((i * 31U + 17U) & 0xFFU);
+        tr_rand_buffer(std::data(payload), std::size(payload));
     }
 
     return payload;
