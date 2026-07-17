@@ -1086,6 +1086,7 @@ public:
         tr_piece_index_t piece,
         std::string message_id,
         std::string temp_file,
+        uint64_t piece_size,
         size_t article_count,
         uint64_t article_payload_size,
         bool upload_attempted,
@@ -1323,6 +1324,8 @@ private:
     void startUsenetUploadWorker();
     void stopUsenetUploadWorker();
     void enqueueUsenetUploadTask(UsenetUploadTask task);
+    void stagePendingUsenetUploads();
+    void releaseUsenetUploadStaging(uint64_t bytes);
     void cancelPendingUsenetUploadsForDiscovery(std::string_view info_hash_string);
     [[nodiscard]] bool holdUsenetUploadBatchForDiscovery(std::vector<UsenetUploadTask> const& batch);
     void usenetUploadWorker();
@@ -1330,6 +1333,8 @@ private:
     std::mutex usenet_upload_mutex_;
     std::condition_variable usenet_upload_cv_;
     std::deque<UsenetUploadTask> usenet_upload_queue_;
+    std::deque<UsenetUploadTask> usenet_upload_pending_staging_queue_;
+    uint64_t usenet_upload_staged_bytes_ = 0U;
     std::vector<std::thread> usenet_upload_threads_;
     bool usenet_upload_stopping_ = false;
 

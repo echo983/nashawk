@@ -80,6 +80,7 @@ namespace
 auto constexpr UsenetEvictionInterval = 5min;
 auto constexpr MaxConcurrentNyuuUploads = size_t{ 2U };
 auto constexpr MaxNyuuBatchFiles = size_t{ 40U };
+auto constexpr MaxUsenetUploadStagingBytes = uint64_t{ 128U * 1024U * 1024U };
 auto constexpr MaxNyuuBatchConnections = size_t{ 8U };
 auto constexpr NyuuBatchCheckConnections = size_t{ 1U };
 
@@ -2606,6 +2607,7 @@ std::optional<std::string> tr_session::ensureUsenetTorrent(tr_torrent* const tor
     auto error = std::optional<std::string>{};
     auto interrupted_uploads = std::vector<tr_piece_index_t>{};
     auto interrupted_repairs = std::vector<tr_piece_index_t>{};
+    auto recoverable_failed_uploads = std::vector<tr_piece_index_t>{};
     auto interrupted_discovery = false;
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
@@ -2640,6 +2642,16 @@ std::optional<std::string> tr_session::ensureUsenetTorrent(tr_torrent* const tor
                     }
                 }
             }
+            if (manifest)
+            {
+                for (tr_piece_index_t piece = 0; piece < tor->piece_count(); ++piece)
+                {
+                    if (manifest->pieces[piece].state == tr_usenet_piece_state::Failed && tor->has_piece(piece))
+                    {
+                        recoverable_failed_uploads.push_back(piece);
+                    }
+                }
+            }
             if (manifest && manifest_changed && !usenet_piece_store_->save(*manifest))
             {
                 error = "Could not save recovered Usenet manifest state";
@@ -2670,6 +2682,16 @@ std::optional<std::string> tr_session::ensureUsenetTorrent(tr_torrent* const tor
         {
             onUsenetPieceCompleted(*tor, piece);
             tr_logAddTraceTor(tor, fmt::format("Requeued interrupted Usenet repair for piece {}", piece));
+        }
+    }
+
+    for (auto const piece : recoverable_failed_uploads)
+    {
+        if (std::find(std::begin(interrupted_uploads), std::end(interrupted_uploads), piece) == std::end(interrupted_uploads) &&
+            std::find(std::begin(interrupted_repairs), std::end(interrupted_repairs), piece) == std::end(interrupted_repairs))
+        {
+            onUsenetPieceCompleted(*tor, piece);
+            tr_logAddTraceTor(tor, fmt::format("Requeued failed local Usenet upload for piece {}", piece));
         }
     }
 
@@ -2916,7 +2938,7 @@ tr_usenet_runtime_snapshot tr_session::usenetRuntimeSnapshot()
 
     {
         auto lock = std::lock_guard{ usenet_upload_mutex_ };
-        snapshot.upload_queue_size = std::size(usenet_upload_queue_);
+        snapshot.upload_queue_size = std::size(usenet_upload_queue_) + std::size(usenet_upload_pending_staging_queue_);
     }
 
     {
@@ -4111,11 +4133,16 @@ void tr_session::stopUsenetUploadWorker()
     {
         auto lock = std::lock_guard{ usenet_upload_mutex_ };
         queue.swap(usenet_upload_queue_);
+        usenet_upload_pending_staging_queue_.clear();
+        usenet_upload_staged_bytes_ = 0U;
     }
 
     for (auto const& task : queue)
     {
-        tr_sys_path_remove(task.temp_file);
+        if (!std::empty(task.temp_file))
+        {
+            tr_sys_path_remove(task.temp_file);
+        }
     }
 }
 
@@ -4125,19 +4152,91 @@ void tr_session::enqueueUsenetUploadTask(UsenetUploadTask task)
         auto lock = std::lock_guard{ usenet_upload_mutex_ };
         if (usenet_upload_stopping_)
         {
-            tr_sys_path_remove(task.temp_file);
             return;
         }
 
-        usenet_upload_queue_.push_back(std::move(task));
+        usenet_upload_pending_staging_queue_.push_back(std::move(task));
     }
 
-    usenet_upload_cv_.notify_one();
+    stagePendingUsenetUploads();
+}
+
+void tr_session::stagePendingUsenetUploads()
+{
+    for (;;)
+    {
+        auto task = UsenetUploadTask{};
+        {
+            auto lock = std::lock_guard{ usenet_upload_mutex_ };
+            if (usenet_upload_stopping_ || std::empty(usenet_upload_pending_staging_queue_))
+            {
+                return;
+            }
+
+            auto const piece_size = usenet_upload_pending_staging_queue_.front().piece_size;
+            if (usenet_upload_staged_bytes_ != 0U && usenet_upload_staged_bytes_ + piece_size > MaxUsenetUploadStagingBytes)
+            {
+                return;
+            }
+
+            task = std::move(usenet_upload_pending_staging_queue_.front());
+            usenet_upload_pending_staging_queue_.pop_front();
+            usenet_upload_staged_bytes_ += task.piece_size;
+        }
+
+        auto* tor = static_cast<tr_torrent*>(nullptr);
+        if (auto const digest = tr_sha1_from_string(task.info_hash_string); digest)
+        {
+            tor = torrents_.get(*digest);
+        }
+
+        auto write_error = std::optional<std::string>{};
+        if (tor == nullptr || !tor->has_metainfo() || !tor->has_piece(task.piece))
+        {
+            write_error = "Completed local piece is no longer available for Usenet staging";
+        }
+        else
+        {
+            write_error = write_piece_to_temp_file(*tor, task.piece, config_dir_, task.temp_file);
+        }
+
+        if (write_error)
+        {
+            releaseUsenetUploadStaging(task.piece_size);
+            tr_logAddWarn(fmt::format("Could not stage piece {} for Usenet upload: {}", task.piece, *write_error));
+            if (usenet_piece_store_ != nullptr)
+            {
+                auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+                (void)usenet_piece_store_->set_piece_state(task.info_hash_string, task.piece, tr_usenet_piece_state::Failed);
+            }
+            return;
+        }
+
+        {
+            auto lock = std::lock_guard{ usenet_upload_mutex_ };
+            if (usenet_upload_stopping_)
+            {
+                tr_sys_path_remove(task.temp_file);
+                usenet_upload_staged_bytes_ -= std::min(usenet_upload_staged_bytes_, task.piece_size);
+                return;
+            }
+            usenet_upload_queue_.push_back(std::move(task));
+        }
+
+        usenet_upload_cv_.notify_one();
+    }
+}
+
+void tr_session::releaseUsenetUploadStaging(uint64_t const bytes)
+{
+    auto lock = std::lock_guard{ usenet_upload_mutex_ };
+    usenet_upload_staged_bytes_ -= std::min(usenet_upload_staged_bytes_, bytes);
 }
 
 void tr_session::cancelPendingUsenetUploadsForDiscovery(std::string_view const info_hash_string)
 {
     auto cancelled = std::vector<UsenetUploadTask>{};
+    auto cancelled_pending_staging = std::vector<UsenetUploadTask>{};
     {
         auto lock = std::lock_guard{ usenet_upload_mutex_ };
         for (auto iter = std::begin(usenet_upload_queue_); iter != std::end(usenet_upload_queue_);)
@@ -4152,22 +4251,43 @@ void tr_session::cancelPendingUsenetUploadsForDiscovery(std::string_view const i
                 ++iter;
             }
         }
+        for (auto iter = std::begin(usenet_upload_pending_staging_queue_);
+             iter != std::end(usenet_upload_pending_staging_queue_);)
+        {
+            if (iter->info_hash_string == info_hash_string)
+            {
+                cancelled_pending_staging.push_back(std::move(*iter));
+                iter = usenet_upload_pending_staging_queue_.erase(iter);
+            }
+            else
+            {
+                ++iter;
+            }
+        }
     }
 
-    auto reset_saved = std::empty(cancelled);
-    if (usenet_piece_store_ != nullptr && !std::empty(cancelled))
+    auto reset_saved = std::empty(cancelled) && std::empty(cancelled_pending_staging);
+    if (usenet_piece_store_ != nullptr && !reset_saved)
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
         auto manifest = usenet_piece_store_->load(info_hash_string);
         if (manifest)
         {
-            for (auto const& task : cancelled)
+            auto reset_task = [&manifest](auto const& task)
             {
                 if (task.piece < manifest->piece_count() &&
                     manifest->pieces[task.piece].state == tr_usenet_piece_state::Uploading)
                 {
                     manifest->set_message_id_state(task.message_id, tr_usenet_piece_state::Unknown);
                 }
+            };
+            for (auto const& task : cancelled)
+            {
+                reset_task(task);
+            }
+            for (auto const& task : cancelled_pending_staging)
+            {
+                reset_task(task);
             }
             if (!usenet_piece_store_->save(*manifest))
             {
@@ -4188,6 +4308,10 @@ void tr_session::cancelPendingUsenetUploadsForDiscovery(std::string_view const i
             {
                 usenet_upload_queue_.push_front(std::move(*iter));
             }
+            for (auto iter = std::rbegin(cancelled_pending_staging); iter != std::rend(cancelled_pending_staging); ++iter)
+            {
+                usenet_upload_pending_staging_queue_.push_front(std::move(*iter));
+            }
         }
         usenet_upload_cv_.notify_all();
         tr_logAddWarn(fmt::format("Restored {} Usenet upload(s) after discovery hold failed", std::size(cancelled)));
@@ -4197,11 +4321,16 @@ void tr_session::cancelPendingUsenetUploadsForDiscovery(std::string_view const i
     for (auto const& task : cancelled)
     {
         tr_sys_path_remove(task.temp_file);
+        releaseUsenetUploadStaging(task.piece_size);
     }
-    if (!std::empty(cancelled))
+    if (!std::empty(cancelled) || !std::empty(cancelled_pending_staging))
     {
-        tr_logAddInfo(fmt::format("Held {} pending Usenet upload(s) for discovery", std::size(cancelled)));
+        tr_logAddInfo(
+            fmt::format(
+                "Held {} pending Usenet upload(s) for discovery",
+                std::size(cancelled) + std::size(cancelled_pending_staging)));
     }
+    stagePendingUsenetUploads();
 }
 
 bool tr_session::holdUsenetUploadBatchForDiscovery(std::vector<UsenetUploadTask> const& batch)
@@ -4240,10 +4369,14 @@ bool tr_session::holdUsenetUploadBatchForDiscovery(std::vector<UsenetUploadTask>
 
     if (held)
     {
+        auto released_bytes = uint64_t{};
         for (auto const& task : batch)
         {
             tr_sys_path_remove(task.temp_file);
+            released_bytes += task.piece_size;
         }
+        releaseUsenetUploadStaging(released_bytes);
+        queue_session_thread([this]() { stagePendingUsenetUploads(); });
         tr_logAddInfo(fmt::format("Held {} staged Usenet upload(s) for discovery", std::size(batch)));
     }
     return held;
@@ -4301,6 +4434,7 @@ void tr_session::usenetUploadWorker()
                         task.piece,
                         std::move(task.message_id),
                         std::move(task.temp_file),
+                        task.piece_size,
                         task.article_count,
                         task.article_payload_size,
                         upload_attempted,
@@ -4620,21 +4754,12 @@ void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t 
         return;
     }
 
-    auto temp_file = std::string{};
-    if (auto write_error = write_piece_to_temp_file(tor, piece, config_dir_, temp_file); write_error)
-    {
-        tr_logAddWarnTor(&tor, fmt::format("Could not stage piece {} for Usenet upload: {}", piece, *write_error));
-        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-        (void)usenet_piece_store_->set_piece_state(tor.info_hash_string(), piece, tr_usenet_piece_state::Failed);
-        return;
-    }
-
     enqueueUsenetUploadTask(
         {
             .info_hash_string = std::string{ tor.info_hash_string() },
             .piece = piece,
             .message_id = entry->message_id,
-            .temp_file = std::move(temp_file),
+            .temp_file = {},
             .piece_size = tor.piece_size(piece),
             .article_payload_size = usenet_piece_store_->max_article_size(),
             .article_count = tr_usenet_piece_article_count(tor.piece_size(piece), usenet_piece_store_->max_article_size())
@@ -4649,6 +4774,7 @@ void tr_session::onUsenetPieceUploadFinished(
     tr_piece_index_t const piece,
     std::string message_id,
     std::string temp_file,
+    uint64_t const piece_size,
     size_t const article_count,
     uint64_t const article_payload_size,
     bool const upload_attempted,
@@ -4657,9 +4783,11 @@ void tr_session::onUsenetPieceUploadFinished(
     std::string error)
 {
     tr_sys_path_remove(temp_file);
+    releaseUsenetUploadStaging(piece_size);
 
     if (usenet_piece_store_ == nullptr)
     {
+        stagePendingUsenetUploads();
         return;
     }
 
@@ -4741,6 +4869,7 @@ void tr_session::onUsenetPieceUploadFinished(
     if (store_error)
     {
         tr_logAddWarn(fmt::format("Could not update Usenet upload state for piece {}: {}", piece, *store_error));
+        stagePendingUsenetUploads();
         return;
     }
 
@@ -4779,4 +4908,5 @@ void tr_session::onUsenetPieceUploadFinished(
     {
         tr_logAddWarn(fmt::format("Usenet upload failed for piece {}: {}", piece, error));
     }
+    stagePendingUsenetUploads();
 }
