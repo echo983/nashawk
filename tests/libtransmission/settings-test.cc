@@ -67,6 +67,7 @@ TEST_F(SettingsTest, usenetEvictionSettingsHaveConservativeDefaults)
 
     EXPECT_FALSE(settings.usenet_eviction_enabled);
     EXPECT_FALSE(settings.usenet_evict_after_readback);
+    EXPECT_FALSE(settings.usenet_auto_integrity_audit_enabled);
     EXPECT_TRUE(settings.usenet_discovery_enabled);
     EXPECT_EQ(tr::DefaultUsenetCheckArticleSize, settings.usenet_check_article_size);
     EXPECT_EQ(0U, settings.usenet_eviction_min_age_minutes);
@@ -78,9 +79,10 @@ TEST_F(SettingsTest, canLoadAndSaveUsenetEvictionSettings)
 {
     auto settings = tr_session::Settings{};
 
-    auto map = tr_variant::Map{ 7U };
+    auto map = tr_variant::Map{ 8U };
     map.try_emplace(TR_KEY_usenet_eviction_enabled, true);
     map.try_emplace(TR_KEY_usenet_evict_after_readback, true);
+    map.try_emplace(TR_KEY_usenet_auto_integrity_audit_enabled, true);
     map.try_emplace(TR_KEY_usenet_check_article_size, int64_t{ 8U * 1024U * 1024U });
     map.try_emplace(TR_KEY_usenet_eviction_min_age_minutes, int64_t{ 5 });
     map.try_emplace(TR_KEY_usenet_cache_size_mib, int64_t{ 256 });
@@ -91,6 +93,7 @@ TEST_F(SettingsTest, canLoadAndSaveUsenetEvictionSettings)
 
     EXPECT_TRUE(settings.usenet_eviction_enabled);
     EXPECT_TRUE(settings.usenet_evict_after_readback);
+    EXPECT_TRUE(settings.usenet_auto_integrity_audit_enabled);
     EXPECT_EQ(8U * 1024U * 1024U, settings.usenet_check_article_size);
     EXPECT_EQ(5U, settings.usenet_eviction_min_age_minutes);
     EXPECT_EQ(256U, settings.usenet_cache_size_mib);
@@ -100,6 +103,7 @@ TEST_F(SettingsTest, canLoadAndSaveUsenetEvictionSettings)
     auto const saved = settings.save();
     EXPECT_EQ(true, saved.value_if<bool>(TR_KEY_usenet_eviction_enabled));
     EXPECT_EQ(true, saved.value_if<bool>(TR_KEY_usenet_evict_after_readback));
+    EXPECT_EQ(true, saved.value_if<bool>(TR_KEY_usenet_auto_integrity_audit_enabled));
     EXPECT_EQ(8U * 1024U * 1024U, saved.value_if<int64_t>(TR_KEY_usenet_check_article_size));
     EXPECT_EQ(5, saved.value_if<int64_t>(TR_KEY_usenet_eviction_min_age_minutes));
     EXPECT_EQ(256, saved.value_if<int64_t>(TR_KEY_usenet_cache_size_mib));

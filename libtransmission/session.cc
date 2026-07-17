@@ -2883,6 +2883,7 @@ tr_usenet_runtime_snapshot tr_session::usenetRuntimeSnapshot()
 {
     auto snapshot = tr_usenet_runtime_snapshot{
         .enabled = settings_.usenet_enabled,
+        .auto_integrity_audit_enabled = settings_.usenet_auto_integrity_audit_enabled,
         .evict_after_readback = settings_.usenet_evict_after_readback,
         .eviction_enabled = settings_.usenet_eviction_enabled,
         .discovery_enabled = settings_.usenet_discovery_enabled,
@@ -3540,6 +3541,11 @@ std::optional<std::string> tr_session::queueUsenetIntegrityAudit(tr_torrent cons
     if (usenet_piece_store_ == nullptr || !settings_.usenet_enabled || !tor.has_metainfo())
     {
         return "Usenet integrity audit is unavailable";
+    }
+
+    if (!manual && !settings_.usenet_auto_integrity_audit_enabled)
+    {
+        return {};
     }
 
     if (!manual && !isUsenetServableComplete(tor))

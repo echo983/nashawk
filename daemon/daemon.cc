@@ -88,7 +88,7 @@ static_assert(TrDefaultPeerPort == 51413, "update 'peerport' desc");
 static_assert(TrDefaultPeerLimitTorrent == 50, "update 'peerlimit-torrent' desc");
 static_assert(TrDefaultPeerLimitGlobal == 200, "update 'peerlimit-global' desc");
 static_assert(TrDefaultRpcPort == 9091 && R"(update "port" desc)");
-auto constexpr Options = std::array<tr_option, 60>{ {
+auto constexpr Options = std::array<tr_option, 62>{ {
     { 'a', "allowed", "Allowed IP addresses. (Default: '127.0.0.1,::1')", "a", Arg::Required, "<list>" },
     { 'b', "blocklist", "Enable peer blocklists", "b", Arg::None, nullptr },
     { 'B', "no-blocklist", "Disable peer blocklists", "B", Arg::None, nullptr },
@@ -184,6 +184,13 @@ auto constexpr Options = std::array<tr_option, 60>{ {
     { 844,
       "no-usenet-evict-after-readback",
       "Require torrent-wide Usenet integrity readiness before local piece eviction",
+      nullptr,
+      Arg::None,
+      nullptr },
+    { 845, "usenet-auto-integrity-audit", "Enable automatic full Usenet integrity audits", nullptr, Arg::None, nullptr },
+    { 846,
+      "no-usenet-auto-integrity-audit",
+      "Disable automatic full Usenet integrity audits (default)",
       nullptr,
       Arg::None,
       nullptr },
@@ -872,6 +879,14 @@ bool tr_daemon::parse_args(int argc, char const* const* argv, bool* dump_setting
 
         case 844:
             map->insert_or_assign(TR_KEY_usenet_evict_after_readback, false);
+            break;
+
+        case 845:
+            map->insert_or_assign(TR_KEY_usenet_auto_integrity_audit_enabled, true);
+            break;
+
+        case 846:
+            map->insert_or_assign(TR_KEY_usenet_auto_integrity_audit_enabled, false);
             break;
 
         case TR_OPT_UNK:

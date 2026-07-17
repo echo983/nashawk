@@ -40,7 +40,7 @@ Validated paths:
 - full torrent-level Usenet integrity audits with repair and BitTorrent fallback
 - manual `Verify Usenet data` action in the Web UI torrent context menu
 - manual `Discover on Usenet` action in the Web UI torrent context menu
-- automatic full integrity audit before the first Usenet Ready transition
+- optional automatic full integrity audit before a Usenet Ready transition
 - immediate eviction eligibility after mandatory remote readback succeeds
 - startup validation through the same Nyuu upload and piece download path used
   by normal operation
@@ -224,6 +224,7 @@ The equivalent settings keys are:
 ```json
 {
   "usenet_enabled": true,
+  "usenet_auto_integrity_audit_enabled": false,
   "usenet_check_article_size": 2097152,
   "usenet_cache_size_mib": 0,
   "usenet_evict_after_readback": false,
@@ -234,6 +235,13 @@ The equivalent settings keys are:
   "usenet_upload_concurrency": 40
 }
 ```
+
+Automatic full-torrent Usenet audits are disabled by default because every
+uploaded piece already requires an independent size and SHA-1 readback before
+it becomes available or evictable. Enable the additional full audit with
+`--usenet-auto-integrity-audit`; disable it explicitly with
+`--no-usenet-auto-integrity-audit`. Manual `Verify Usenet data` remains
+available regardless of this setting.
 
 Local piece eviction is disabled by default. To enable immediate eviction after
 mandatory remote verification:

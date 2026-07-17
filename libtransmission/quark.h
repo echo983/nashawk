@@ -742,6 +742,7 @@ enum // NOLINT(performance-enum-size)
     TR_KEY_use_global_speed_limit,
     TR_KEY_use_speed_limit,
     TR_KEY_usenet,
+    TR_KEY_usenet_auto_integrity_audit_enabled,
     TR_KEY_usenet_cache_dir,
     TR_KEY_usenet_cache_size_mib,
     TR_KEY_usenet_check_article_size,

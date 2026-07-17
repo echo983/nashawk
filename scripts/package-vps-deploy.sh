@@ -63,6 +63,7 @@ usenet_check_article_size="${NASHAWK_USENET_CHECK_ARTICLE_SIZE:-2097152}"
 usenet_upload_concurrency="${NASHAWK_USENET_UPLOAD_CONCURRENCY:-40}"
 usenet_eviction_min_age_minutes="${NASHAWK_USENET_EVICTION_MIN_AGE_MINUTES:-0}"
 usenet_cache_size_mib="${NASHAWK_USENET_CACHE_SIZE_MIB:-0}"
+usenet_auto_integrity_audit="${NASHAWK_USENET_AUTO_INTEGRITY_AUDIT:-0}"
 usenet_evict_after_readback="${NASHAWK_USENET_EVICT_AFTER_READBACK:-1}"
 usenet_discovery_enabled="${NASHAWK_USENET_DISCOVERY_ENABLED:-1}"
 usenet_discovery_sample_size="${NASHAWK_USENET_DISCOVERY_SAMPLE_SIZE:-16}"
@@ -119,6 +120,7 @@ echo "  Downloads: $download_dir"
 echo "  Log: $log_file"
 echo "  nyuu: $(command -v nyuu)"
 echo "  Web UI: $TRANSMISSION_WEB_HOME"
+echo "  Automatic full Usenet audit: $usenet_auto_integrity_audit"
 echo "  Evict after readback: $usenet_evict_after_readback"
 echo "Press Ctrl-C to stop."
 
@@ -142,6 +144,13 @@ else
     eviction_args+=(--usenet-evict-after-readback)
 fi
 
+integrity_audit_args=()
+if [[ "$usenet_auto_integrity_audit" == 1 || "$usenet_auto_integrity_audit" == true ]]; then
+    integrity_audit_args+=(--usenet-auto-integrity-audit)
+else
+    integrity_audit_args+=(--no-usenet-auto-integrity-audit)
+fi
+
 exec "$daemon" -f \
     -g "$config_dir" \
     -w "$download_dir" \
@@ -156,6 +165,7 @@ exec "$daemon" -f \
     --usenet-eviction-min-age-minutes "$usenet_eviction_min_age_minutes" \
     --usenet-cache-size-mib "$usenet_cache_size_mib" \
     "${eviction_args[@]}" \
+    "${integrity_audit_args[@]}" \
     "${discovery_args[@]}" \
     "${version_args[@]}" \
     --log-level="$log_level" \
