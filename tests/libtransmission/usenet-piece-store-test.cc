@@ -211,9 +211,12 @@ TEST_F(UsenetPieceStoreTest, discoveryMetadataRoundtrips)
     auto manifest = store.load(metainfo.info_hash_string());
     ASSERT_TRUE(manifest);
     manifest->discovery.state = tr_usenet_discovery_state::Available;
+    manifest->discovery.trigger = tr_usenet_discovery_trigger::DuplicateEvidence;
     manifest->discovery.checked_at = 12345U;
     manifest->discovery.sample_size = 4U;
     manifest->discovery.sampled_pieces = { 0U, 1U, 2U, 3U };
+    manifest->discovery.attempted_pieces = { 0U, 1U, 2U, 3U };
+    manifest->discovery.duplicate_verified_pieces = { 0U, 1U, 2U };
     manifest->discovery.error = "ignored after success";
     manifest->set_all_piece_states(tr_usenet_piece_state::Available);
     ASSERT_TRUE(store.save(*manifest));
@@ -221,13 +224,31 @@ TEST_F(UsenetPieceStoreTest, discoveryMetadataRoundtrips)
     auto loaded = store.load(metainfo.info_hash_string());
     ASSERT_TRUE(loaded);
     EXPECT_EQ(tr_usenet_discovery_state::Available, loaded->discovery.state);
+    EXPECT_EQ(tr_usenet_discovery_trigger::DuplicateEvidence, loaded->discovery.trigger);
     EXPECT_EQ(12345U, loaded->discovery.checked_at);
     EXPECT_EQ(4U, loaded->discovery.sample_size);
     EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U, 1U, 2U, 3U }), loaded->discovery.sampled_pieces);
+    EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U, 1U, 2U, 3U }), loaded->discovery.attempted_pieces);
+    EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U, 1U, 2U }), loaded->discovery.duplicate_verified_pieces);
     EXPECT_EQ("ignored after success"sv, loaded->discovery.error);
     EXPECT_TRUE(loaded->has_meaningful_state());
     ASSERT_FALSE(std::empty(loaded->pieces));
     EXPECT_EQ(tr_usenet_piece_state::Available, loaded->pieces.front().state);
+}
+
+TEST_F(UsenetPieceStoreTest, discoveryEvidenceRequiresThreeDistinctHashesAndHalfOfAttempts)
+{
+    auto info = tr_usenet_discovery_info{};
+    info.attempted_pieces = { 0U, 1U, 2U, 3U, 4U, 5U, 6U };
+    info.duplicate_verified_pieces = { 0U, 1U, 2U };
+    EXPECT_FALSE(tr_usenet_discovery_evidence_ready(info, 10U));
+    info.attempted_pieces.pop_back();
+    EXPECT_TRUE(tr_usenet_discovery_evidence_ready(info, 10U));
+
+    info = {};
+    info.attempted_pieces = { 0U, 1U };
+    info.duplicate_verified_pieces = { 0U, 1U };
+    EXPECT_TRUE(tr_usenet_discovery_evidence_ready(info, 2U));
 }
 
 TEST_F(UsenetPieceStoreTest, discoverySamplePiecesAreDeterministicBoundedAndUseful)
