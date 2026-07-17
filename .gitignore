@@ -13,6 +13,7 @@
 /incomplete
 /watch
 /transmission-home
+/tmp/
 *.part
 Transmission.xcodeproj/*.xcworkspace
 Transmission.xcodeproj/xcuserdata
