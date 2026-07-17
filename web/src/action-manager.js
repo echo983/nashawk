@@ -16,6 +16,10 @@ export class ActionManager extends EventTarget {
         shortcut: 'D',
         text: 'Deselect all',
       },
+      'discover-selected-usenet': {
+        enabled: false,
+        text: 'Discover on Usenet',
+      },
       'move-bottom': { enabled: false, text: 'Bottom' },
       'move-down': { enabled: false, text: 'Down' },
       'move-top': { enabled: false, text: 'Top' },
@@ -213,6 +217,7 @@ export class ActionManager extends EventTarget {
       'show-move-dialog',
       'trash-selected-torrents',
       'verify-selected-torrents',
+      'discover-selected-usenet',
       'verify-selected-usenet',
     ]);
 

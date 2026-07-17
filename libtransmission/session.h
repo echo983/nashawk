@@ -1068,6 +1068,7 @@ public:
 
     [[nodiscard]] std::optional<std::string> addTorrent(tr_torrent* tor);
     [[nodiscard]] std::optional<std::string> ensureUsenetTorrent(tr_torrent* tor);
+    [[nodiscard]] std::optional<std::string> queueUsenetDiscovery(tr_torrent const& tor, bool manual);
     void maybeQueueUsenetDiscovery(tr_torrent const& tor);
     void queueUsenetUploadsForLocalPieces(tr_torrent const& tor);
     [[nodiscard]] bool hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);

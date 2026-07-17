@@ -233,6 +233,9 @@ export class Transmission extends EventTarget {
         case 'verify-selected-torrents':
           this._verifyTorrents(this.getSelectedTorrents());
           break;
+        case 'discover-selected-usenet':
+          this._discoverUsenetTorrents(this.getSelectedTorrents());
+          break;
         case 'verify-selected-usenet':
           this._verifyUsenetTorrents(this.getSelectedTorrents());
           break;
@@ -1124,6 +1127,13 @@ TODO: fix this when notifications get fixed
   }
   _verifyUsenetTorrents(torrents) {
     this.remote.verifyUsenetTorrents(
+      Transmission._getTorrentIds(torrents),
+      this.refreshTorrents,
+      this,
+    );
+  }
+  _discoverUsenetTorrents(torrents) {
+    this.remote.discoverUsenetTorrents(
       Transmission._getTorrentIds(torrents),
       this.refreshTorrents,
       this,

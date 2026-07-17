@@ -280,6 +280,14 @@ export class Remote {
       context,
     );
   }
+  discoverUsenetTorrents(torrent_ids, callback, context) {
+    this.sendTorrentActionRequests(
+      'torrent_usenet_discover',
+      torrent_ids,
+      callback,
+      context,
+    );
+  }
   reannounceTorrents(torrent_ids, callback, context) {
     this.sendTorrentActionRequests(
       'torrent_reannounce',

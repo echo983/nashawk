@@ -693,6 +693,7 @@ enum // NOLINT(performance-enum-size)
     TR_KEY_torrent_start,
     TR_KEY_torrent_start_now,
     TR_KEY_torrent_stop,
+    TR_KEY_torrent_usenet_discover,
     TR_KEY_torrent_usenet_verify,
     TR_KEY_torrent_verify,
     TR_KEY_torrents,

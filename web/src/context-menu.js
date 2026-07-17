@@ -185,6 +185,7 @@ export class ContextMenu extends EventTarget {
         new_item('trash-selected-torrents', true),
         new_separator(),
         new_item('verify-selected-torrents'),
+        new_item('discover-selected-usenet'),
         new_item('verify-selected-usenet'),
         new_item('show-move-dialog'),
         new_item('show-rename-dialog'),

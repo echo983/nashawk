@@ -2665,26 +2665,47 @@ std::optional<std::string> tr_session::ensureUsenetTorrent(tr_torrent* const tor
 
 void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
 {
-    if (usenet_piece_store_ == nullptr || !settings_.usenet_discovery_enabled || !tor.has_metainfo())
+    if (auto const error = queueUsenetDiscovery(tor, false); error)
     {
-        return;
+        tr_logAddTraceTor(&tor, fmt::format("Automatic Usenet discovery not queued: {}", *error));
+    }
+}
+
+std::optional<std::string> tr_session::queueUsenetDiscovery(tr_torrent const& tor, bool const manual)
+{
+    if (usenet_piece_store_ == nullptr || !settings_.usenet_enabled)
+    {
+        return "Usenet backend is disabled";
+    }
+    if (!settings_.usenet_discovery_enabled)
+    {
+        return "Usenet discovery is disabled";
+    }
+    if (!tor.has_metainfo())
+    {
+        return "Torrent metadata is not available";
     }
 
     auto samples = std::vector<UsenetDiscoverySample>{};
-    auto error = std::optional<std::string>{};
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
         auto manifest = usenet_piece_store_->load(tor.info_hash_string());
         if (!manifest)
         {
-            return;
+            return "Usenet manifest is missing or incomplete";
         }
 
-        if (!tr_usenet_discovery_evidence_ready(manifest->discovery, manifest->piece_count()) ||
-            manifest->discovery.state == tr_usenet_discovery_state::Checking ||
-            manifest->discovery.state == tr_usenet_discovery_state::Available)
+        if (manifest->discovery.state == tr_usenet_discovery_state::Checking)
         {
-            return;
+            return "Usenet discovery is already running";
+        }
+        if (!manual && manifest->discovery.state == tr_usenet_discovery_state::Available)
+        {
+            return "Torrent is already discovered on Usenet";
+        }
+        if (!manual && !tr_usenet_discovery_evidence_ready(manifest->discovery, manifest->piece_count()))
+        {
+            return "Verified duplicate evidence threshold has not been reached";
         }
 
         auto const sample_pieces = tr_usenet_discovery_sample_pieces(
@@ -2693,7 +2714,7 @@ void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
             settings_.usenet_discovery_sample_size);
         if (std::empty(sample_pieces))
         {
-            return;
+            return "No Usenet discovery samples are available";
         }
 
         samples.reserve(std::size(sample_pieces));
@@ -2709,21 +2730,16 @@ void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
         }
 
         manifest->discovery.state = tr_usenet_discovery_state::Checking;
-        manifest->discovery.trigger = tr_usenet_discovery_trigger::DuplicateEvidence;
+        manifest->discovery.trigger = manual ? tr_usenet_discovery_trigger::Manual :
+                                               tr_usenet_discovery_trigger::DuplicateEvidence;
         manifest->discovery.checked_at = 0U;
         manifest->discovery.sample_size = settings_.usenet_discovery_sample_size;
         manifest->discovery.sampled_pieces = sample_pieces;
         manifest->discovery.error.clear();
         if (!usenet_piece_store_->save(*manifest))
         {
-            error = "Could not save Usenet discovery state";
+            return "Could not save Usenet discovery state";
         }
-    }
-
-    if (error)
-    {
-        tr_logAddWarnTor(&tor, std::move(*error));
-        return;
     }
 
     cancelPendingUsenetUploadsForDiscovery(tor.info_hash_string());
@@ -2737,7 +2753,10 @@ void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
             .requested_sample_size = settings_.usenet_discovery_sample_size,
         });
 
-    tr_logAddInfoTor(&tor, fmt::format("Queued Usenet discovery with {} sample piece(s)", sample_count));
+    tr_logAddInfoTor(
+        &tor,
+        fmt::format("Queued {} Usenet discovery with {} sample piece(s)", manual ? "manual" : "automatic", sample_count));
+    return {};
 }
 
 void tr_session::queueUsenetUploadsForLocalPieces(tr_torrent const& tor)
