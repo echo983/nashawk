@@ -40,7 +40,7 @@ Validated paths:
 - full torrent-level Usenet integrity audits with repair and BitTorrent fallback
 - manual `Verify Usenet data` action in the Web UI torrent context menu
 - manual `Discover on Usenet` action in the Web UI torrent context menu
-- automatic full integrity audit before the first Usenet Ready transition
+- optional automatic full integrity audit before a Usenet Ready transition
 - immediate eviction eligibility after mandatory remote readback succeeds
 - startup validation through the same Nyuu upload and piece download path used
   by normal operation
@@ -224,8 +224,10 @@ The equivalent settings keys are:
 ```json
 {
   "usenet_enabled": true,
+  "usenet_auto_integrity_audit_enabled": false,
   "usenet_check_article_size": 2097152,
   "usenet_cache_size_mib": 0,
+  "usenet_evict_after_readback": false,
   "usenet_eviction_enabled": false,
   "usenet_eviction_min_age_minutes": 0,
   "usenet_discovery_enabled": true,
@@ -234,20 +236,30 @@ The equivalent settings keys are:
 }
 ```
 
+Automatic full-torrent Usenet audits are disabled by default because every
+uploaded piece already requires an independent size and SHA-1 readback before
+it becomes available or evictable. Enable the additional full audit with
+`--usenet-auto-integrity-audit`; disable it explicitly with
+`--no-usenet-auto-integrity-audit`. Manual `Verify Usenet data` remains
+available regardless of this setting.
+
 Local piece eviction is disabled by default. To enable immediate eviction after
 mandatory remote verification:
 
 ```sh
 transmission-daemon --usenet-enabled \
   --usenet-eviction-enabled \
+  --usenet-evict-after-readback \
   --usenet-eviction-min-age-minutes 0 \
   --usenet-cache-size-mib 0
 ```
 
 `usenet_cache_size_mib` and `usenet_eviction_min_age_minutes` both default to
-`0`. When eviction is enabled, a fully verified Ready torrent can therefore
-release local pieces immediately. Set a positive minimum age or cache size to
-retain a local hot layer.
+`0`. By default, eviction still waits for a fully verified Ready torrent. With
+`--usenet-evict-after-readback`, each independently hash-verified piece may be
+released immediately without waiting for torrent-wide integrity readiness.
+Use `--no-usenet-evict-after-readback` to retain the conservative gate. Set a
+positive minimum age or cache size to retain a local hot layer.
 
 Usenet discovery is enabled by default when Usenet mode is enabled. It can be
 disabled explicitly:
@@ -380,6 +392,10 @@ The manifest records discovery metadata:
 Discovery IO shares the same Usenet IO limit as upload and download work.
 
 ## Web UI And RPC Observability
+
+The stable Nashawk RPC field contract, examples, completion predicates, polling
+guidance, and security boundary are documented in
+[Nashawk Usenet RPC](Usenet-RPC.md).
 
 The Web UI exposes Usenet status and bounded maintenance actions without
 exposing secrets.

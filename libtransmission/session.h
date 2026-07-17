@@ -74,6 +74,7 @@
 
 tr_peer_id_t tr_peerIdInit();
 
+class tr_bitfield;
 class tr_peer_socket;
 class tr_usenet_piece_store;
 struct tr_pex;
@@ -84,6 +85,8 @@ struct tr_variant;
 struct tr_usenet_runtime_snapshot
 {
     bool enabled = false;
+    bool auto_integrity_audit_enabled = false;
+    bool evict_after_readback = false;
     bool eviction_enabled = false;
     bool discovery_enabled = false;
     size_t io_limit = 0U;
@@ -1073,6 +1076,7 @@ public:
     void queueUsenetUploadsForLocalPieces(tr_torrent const& tor);
     [[nodiscard]] bool hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
     [[nodiscard]] bool isUsenetServableComplete(tr_torrent const& tor);
+    [[nodiscard]] tr_bitfield usenetPieceAvailability(tr_torrent const& tor);
     void addUsenetPiecesToBitfield(tr_torrent const& tor, std::vector<uint8_t>& bitfield);
     void fetchUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
     void onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t piece);
@@ -1082,6 +1086,7 @@ public:
         tr_piece_index_t piece,
         std::string message_id,
         std::string temp_file,
+        uint64_t piece_size,
         size_t article_count,
         uint64_t article_payload_size,
         bool upload_attempted,
@@ -1284,7 +1289,20 @@ private:
     void releaseUsenetIoSlots(size_t count);
     [[nodiscard]] size_t usenetIoLimit() const;
     void startUsenetEvictionTimer();
+    void scheduleUsenetEvictionScan();
     void scanUsenetEvictionCandidates();
+    void cacheUsenetPieceAvailability(tr_torrent const& tor, tr_usenet_piece_manifest const& manifest);
+
+    struct UsenetPieceAvailabilityCache
+    {
+        std::string info_hash_string;
+        std::vector<uint8_t> raw;
+        size_t piece_count = 0U;
+        std::chrono::steady_clock::time_point updated_at;
+    };
+
+    std::mutex usenet_piece_availability_mutex_;
+    std::vector<UsenetPieceAvailabilityCache> usenet_piece_availability_cache_;
 
     std::mutex usenet_io_mutex_;
     std::condition_variable usenet_io_cv_;
@@ -1306,6 +1324,8 @@ private:
     void startUsenetUploadWorker();
     void stopUsenetUploadWorker();
     void enqueueUsenetUploadTask(UsenetUploadTask task);
+    void stagePendingUsenetUploads();
+    void releaseUsenetUploadStaging(uint64_t bytes);
     void cancelPendingUsenetUploadsForDiscovery(std::string_view info_hash_string);
     [[nodiscard]] bool holdUsenetUploadBatchForDiscovery(std::vector<UsenetUploadTask> const& batch);
     void usenetUploadWorker();
@@ -1313,6 +1333,8 @@ private:
     std::mutex usenet_upload_mutex_;
     std::condition_variable usenet_upload_cv_;
     std::deque<UsenetUploadTask> usenet_upload_queue_;
+    std::deque<UsenetUploadTask> usenet_upload_pending_staging_queue_;
+    uint64_t usenet_upload_staged_bytes_ = 0U;
     std::vector<std::thread> usenet_upload_threads_;
     bool usenet_upload_stopping_ = false;
 
@@ -1409,6 +1431,7 @@ private:
     void startUsenetIntegrityWorker();
     void stopUsenetIntegrityWorker();
     void usenetIntegrityWorker();
+    void onUsenetIntegrityProgress(std::string const& info_hash_string, size_t checked, size_t verified, size_t missing);
     void onUsenetIntegrityFinished(UsenetIntegrityResult result);
 
     std::mutex usenet_integrity_mutex_;
@@ -1557,6 +1580,8 @@ private:
     std::unique_ptr<tr::Timer> save_timer_;
 
     std::unique_ptr<tr::Timer> usenet_eviction_timer_;
+    std::unique_ptr<tr::Timer> usenet_eviction_trigger_timer_;
+    bool usenet_eviction_scan_pending_ = false;
 
     std::unique_ptr<tr_verify_worker> verifier_ = std::make_unique<tr_verify_worker>();
 

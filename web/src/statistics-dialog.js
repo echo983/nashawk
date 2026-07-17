@@ -72,7 +72,13 @@ export class StatisticsDialog extends EventTarget {
     let eviction = 'Unknown';
     if (known) {
       mode = enabled ? 'Enabled' : 'Disabled';
-      eviction = u.usenet_eviction_enabled ? 'Enabled' : 'Disabled';
+      if (u.usenet_eviction_enabled) {
+        eviction = u.usenet_evict_after_readback
+          ? 'Enabled (after readback)'
+          : 'Enabled (torrent ready)';
+      } else {
+        eviction = 'Disabled';
+      }
     }
 
     setTextContent(this.elements.usenet.mode, mode);

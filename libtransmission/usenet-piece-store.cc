@@ -735,6 +735,8 @@ std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state const 
     {
     case tr_usenet_integrity_state::NotChecked:
         return "not_checked"sv;
+    case tr_usenet_integrity_state::Queued:
+        return "queued"sv;
     case tr_usenet_integrity_state::Checking:
         return "checking"sv;
     case tr_usenet_integrity_state::Repairing:
@@ -752,7 +754,8 @@ std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state const 
 
 bool tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state const state) noexcept
 {
-    return state == tr_usenet_integrity_state::Checking || state == tr_usenet_integrity_state::Repairing;
+    return state == tr_usenet_integrity_state::Queued || state == tr_usenet_integrity_state::Checking ||
+        state == tr_usenet_integrity_state::Repairing;
 }
 
 bool tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state const state) noexcept
@@ -760,9 +763,28 @@ bool tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state const
     return state == tr_usenet_discovery_state::Checking;
 }
 
+bool tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state const state, bool const evict_after_readback) noexcept
+{
+    return state == tr_usenet_integrity_state::Ready || evict_after_readback;
+}
+
+bool tr_usenet_manifest_has_pending_uploads(tr_usenet_piece_manifest const& manifest) noexcept
+{
+    return std::ranges::any_of(
+        manifest.pieces,
+        [](auto const& piece)
+        { return piece.state == tr_usenet_piece_state::Unknown || piece.state == tr_usenet_piece_state::Uploading; });
+}
+
+bool tr_usenet_piece_needs_integrity_priority(tr_usenet_piece_entry const& entry) noexcept
+{
+    return entry.state != tr_usenet_piece_state::Available || entry.verified_at == 0U;
+}
+
 std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view const name) noexcept
 {
     for (auto const state : { tr_usenet_integrity_state::NotChecked,
+                              tr_usenet_integrity_state::Queued,
                               tr_usenet_integrity_state::Checking,
                               tr_usenet_integrity_state::Repairing,
                               tr_usenet_integrity_state::Ready,

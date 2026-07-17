@@ -629,6 +629,11 @@ a {
         color: var(--white);
       }
 
+      &.usenet-uploading {
+        background: var(--blue-100);
+        color: var(--white);
+      }
+
       &.mixed-ready {
         background: var(--green-100);
         color: var(--white);

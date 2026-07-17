@@ -58,6 +58,7 @@ TEST_F(UsenetPieceStoreTest, stateNamesRoundtrip)
     EXPECT_FALSE(tr_usenet_discovery_state_from_name("not-a-discovery-state"sv));
 
     for (auto const state : { tr_usenet_integrity_state::NotChecked,
+                              tr_usenet_integrity_state::Queued,
                               tr_usenet_integrity_state::Checking,
                               tr_usenet_integrity_state::Repairing,
                               tr_usenet_integrity_state::Ready,
@@ -142,6 +143,38 @@ TEST_F(UsenetPieceStoreTest, evictionEligibilityRequiresAvailableLocalOldPiece)
     entry.available_at = 100U;
     entry.state = tr_usenet_piece_state::Uploading;
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 200U, 60U));
+}
+
+TEST_F(UsenetPieceStoreTest, immediateReadbackEvictionBypassesOnlyTheTorrentWideReadyGate)
+{
+    EXPECT_FALSE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::NotChecked, false));
+    EXPECT_FALSE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::Checking, false));
+    EXPECT_FALSE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::Incomplete, false));
+    EXPECT_TRUE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::Ready, false));
+
+    EXPECT_TRUE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::NotChecked, true));
+    EXPECT_TRUE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::Checking, true));
+    EXPECT_TRUE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::Incomplete, true));
+}
+
+TEST_F(UsenetPieceStoreTest, integrityWaitsForPendingUploadsButNotFailedPieces)
+{
+    auto manifest = tr_usenet_piece_manifest{};
+    manifest.pieces.resize(2U);
+
+    EXPECT_TRUE(tr_usenet_manifest_has_pending_uploads(manifest));
+
+    manifest.pieces[0].state = tr_usenet_piece_state::Uploading;
+    manifest.pieces[1].state = tr_usenet_piece_state::Available;
+    EXPECT_TRUE(tr_usenet_manifest_has_pending_uploads(manifest));
+
+    manifest.pieces[0].state = tr_usenet_piece_state::Failed;
+    EXPECT_FALSE(tr_usenet_manifest_has_pending_uploads(manifest));
+
+    EXPECT_TRUE(tr_usenet_piece_needs_integrity_priority(manifest.pieces[0]));
+    EXPECT_TRUE(tr_usenet_piece_needs_integrity_priority(manifest.pieces[1]));
+    manifest.pieces[1].verified_at = 1U;
+    EXPECT_FALSE(tr_usenet_piece_needs_integrity_priority(manifest.pieces[1]));
 }
 
 TEST_F(UsenetPieceStoreTest, ensureTorrentCreatesManifest)
@@ -316,6 +349,7 @@ TEST_F(UsenetPieceStoreTest, interruptedDiscoveryBecomesRetryableError)
 TEST_F(UsenetPieceStoreTest, discoveryAndIntegrityWorkAreMutuallyExclusive)
 {
     EXPECT_FALSE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::NotChecked));
+    EXPECT_TRUE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Queued));
     EXPECT_TRUE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Checking));
     EXPECT_TRUE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Repairing));
     EXPECT_FALSE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Ready));

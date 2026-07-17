@@ -172,4 +172,26 @@ TEST(UsenetServiceTest, parsesOnlyUniqueDuplicateMessageIdErrors)
     EXPECT_EQ((std::vector<std::string>{ first, continuation }), tr_usenet_parse_duplicate_message_ids(diagnostics));
 }
 
+TEST(UsenetServiceTest, missingArticleScanRejectsInvalidRequestsBeforeConnecting)
+{
+    auto result = tr_usenet_missing_piece_articles({ .config_dir = {}, .base_message_id = {}, .article_count = 1U });
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+
+    result = tr_usenet_missing_piece_articles(
+        {
+            .config_dir = {},
+            .base_message_id = "0123456789abcdef0123456789abcdef01234567@nashawk.local",
+            .article_count = 0U,
+        });
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+
+    result = tr_usenet_missing_piece_articles(
+        {
+            .config_dir = {},
+            .base_message_id = "0123456789abcdef0123456789abcdef01234567@nashawk.local",
+            .article_count = TrUsenetMaxArticlesPerPiece + 1U,
+        });
+    ASSERT_TRUE(std::holds_alternative<std::string>(result));
+}
+
 } // namespace tr::test

@@ -325,22 +325,24 @@ export class Torrent extends EventTarget {
     const unknown = summary.unknown ?? 0;
     const integrity = summary.integrity?.status ?? 'not_checked';
     const servablePercent = Math.min(servable / pieceCount, 1);
+    const usenetPercent = Math.min(available / pieceCount, 1);
 
     if (servable >= pieceCount) {
-      if (local >= pieceCount) {
-        return {
-          label: 'Local',
-          state: 'local',
-          title: 'All pieces are currently stored locally',
-        };
-      }
-
       if (integrity === 'checking') {
         return {
           label: 'Verifying Usenet',
           percent: servablePercent,
           state: 'usenet-verifying',
           title: 'A full Usenet article and piece hash audit is running',
+        };
+      }
+      if (integrity === 'queued') {
+        return {
+          label: 'Audit Queued',
+          percent: servablePercent,
+          state: 'usenet-verifying',
+          title:
+            'The full Usenet audit will start after pending uploads finish',
         };
       }
       if (integrity === 'repairing') {
@@ -351,15 +353,29 @@ export class Torrent extends EventTarget {
           title: 'Missing or corrupt Usenet pieces are being repaired',
         };
       }
-      if (integrity !== 'ready') {
+      if ((summary.integrity?.waiting_for_peers ?? 0) > 0) {
         return {
-          label:
-            (summary.integrity?.waiting_for_peers ?? 0) > 0
-              ? 'Waiting for Peers'
-              : 'Verification Needed',
+          label: 'Waiting for Peers',
           percent: servablePercent,
           state: 'usenet-unverified',
-          title: 'All pieces appear servable but have not passed a full audit',
+          title: 'Usenet repair is waiting for missing pieces from peers',
+        };
+      }
+
+      if (available < pieceCount) {
+        return {
+          label: `Usenet Upload ${Formatter.percentString(100 * usenetPercent, 1)}%`,
+          percent: usenetPercent,
+          state: 'usenet-uploading',
+          title: `${available} of ${pieceCount} pieces are confirmed on Usenet; ${uploading} uploading, ${failed} failed`,
+        };
+      }
+
+      if (local >= pieceCount) {
+        return {
+          label: 'Local',
+          state: 'local',
+          title: 'All pieces are currently stored locally',
         };
       }
 

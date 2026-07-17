@@ -731,6 +731,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "use_global_speed_limit"sv, // .resume
     "use_speed_limit"sv, // .resume
     "usenet"sv, // rpc
+    "usenet_auto_integrity_audit_enabled"sv, // tr_session::Settings
     "usenet_cache_dir"sv, // tr_session::Settings
     "usenet_cache_size_mib"sv, // tr_session::Settings
     "usenet_check_article_size"sv, // tr_session::Settings
@@ -739,6 +740,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "usenet_download_in_flight"sv, // rpc
     "usenet_download_queue_size"sv, // rpc
     "usenet_enabled"sv, // tr_session::Settings
+    "usenet_evict_after_readback"sv, // tr_session::Settings
     "usenet_eviction_enabled"sv, // tr_session::Settings
     "usenet_eviction_min_age_minutes"sv, // tr_session::Settings
     "usenet_io_active"sv, // rpc
