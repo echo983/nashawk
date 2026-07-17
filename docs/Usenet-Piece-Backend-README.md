@@ -49,6 +49,16 @@ The integrity repair milestone passed all 619 enabled CTest cases and repeated
 real-provider startup upload/readback checks on 2026-07-17. Eleven upstream
 tests remained disabled by the project's normal test configuration.
 
+The evidence-driven discovery milestone passed all 626 enabled CTest cases, a
+Web UI production build, and a real-provider duplicate-upload roundtrip on
+2026-07-17. The provider test used a trackerless 1.5 MiB random fixture with six
+256 KiB pieces. A first clean node uploaded and read back all six pieces. A
+second clean manifest then received and verified three distinct duplicate
+Message-ID responses, automatically queued discovery, validated all six sample
+chains, and finished with discovery `available`, trigger
+`duplicate_evidence`, and integrity `ready`. Eleven upstream tests remained
+disabled by the normal project configuration.
+
 Current limits:
 
 - Usenet downloads use one worker and share the configured Usenet IO limit with

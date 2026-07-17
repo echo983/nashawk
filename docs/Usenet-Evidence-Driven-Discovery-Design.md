@@ -1,7 +1,7 @@
 # Usenet Evidence-Driven Discovery Design
 
-Status: Implemented on `feature/usenet-evidence-driven-discovery`; real-provider
-validation pending.
+Status: Implemented and real-provider validated on
+`feature/usenet-evidence-driven-discovery`.
 
 ## Objective
 
