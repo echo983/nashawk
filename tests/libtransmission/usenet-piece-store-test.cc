@@ -265,14 +265,61 @@ TEST_F(UsenetPieceStoreTest, discoveryEvidenceDeduplicatesSharedMessageIds)
     ASSERT_GE(manifest->piece_count(), 3U);
     manifest->pieces[1].message_id = manifest->pieces[0].message_id;
 
-    EXPECT_FALSE(manifest->record_discovery_upload_attempt(0U, true));
+    EXPECT_FALSE(manifest->record_discovery_upload_attempt(0U, true, 100U));
     EXPECT_GT(manifest->discovery.evidence_window_started_at, 0U);
-    EXPECT_FALSE(manifest->record_discovery_upload_attempt(1U, true));
+    EXPECT_FALSE(manifest->record_discovery_upload_attempt(1U, true, 101U));
     EXPECT_EQ(1U, std::size(manifest->discovery.attempted_pieces));
     EXPECT_EQ(1U, std::size(manifest->discovery.duplicate_verified_pieces));
-    EXPECT_FALSE(manifest->record_discovery_upload_attempt(2U, false));
+    EXPECT_FALSE(manifest->record_discovery_upload_attempt(2U, false, 102U));
     EXPECT_EQ(2U, std::size(manifest->discovery.attempted_pieces));
     EXPECT_EQ(1U, std::size(manifest->discovery.duplicate_verified_pieces));
+}
+
+TEST_F(UsenetPieceStoreTest, discoveryCooldownDefersTheNextEvidenceWindow)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+    auto manifest = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(manifest);
+    manifest->discovery.retry_after = 200U;
+
+    EXPECT_FALSE(manifest->record_discovery_upload_attempt(0U, true, 199U));
+    EXPECT_TRUE(manifest->discovery.attempted_pieces.empty());
+    EXPECT_TRUE(manifest->discovery.duplicate_verified_pieces.empty());
+    EXPECT_EQ(0U, manifest->discovery.evidence_window_started_at);
+
+    EXPECT_FALSE(manifest->record_discovery_upload_attempt(0U, true, 200U));
+    EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U }), manifest->discovery.attempted_pieces);
+    EXPECT_EQ((std::vector<tr_piece_index_t>{ 0U }), manifest->discovery.duplicate_verified_pieces);
+    EXPECT_EQ(200U, manifest->discovery.evidence_window_started_at);
+}
+
+TEST_F(UsenetPieceStoreTest, interruptedDiscoveryBecomesRetryableError)
+{
+    auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
+    auto store = tr_usenet_piece_store{ sandboxDir(), metainfo.piece_size() };
+    ASSERT_FALSE(store.ensure_torrent(metainfo));
+    auto manifest = store.load(metainfo.info_hash_string());
+    ASSERT_TRUE(manifest);
+
+    EXPECT_FALSE(manifest->reset_interrupted_discovery(99U));
+    manifest->discovery.state = tr_usenet_discovery_state::Checking;
+    EXPECT_TRUE(manifest->reset_interrupted_discovery(100U));
+    EXPECT_EQ(tr_usenet_discovery_state::Error, manifest->discovery.state);
+    EXPECT_EQ(100U, manifest->discovery.checked_at);
+    EXPECT_EQ("Previous Usenet discovery was interrupted", manifest->discovery.error);
+    EXPECT_FALSE(manifest->reset_interrupted_discovery(101U));
+    EXPECT_EQ(100U, manifest->discovery.checked_at);
+}
+
+TEST_F(UsenetPieceStoreTest, discoveryAndIntegrityWorkAreMutuallyExclusive)
+{
+    EXPECT_FALSE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::NotChecked));
+    EXPECT_TRUE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Checking));
+    EXPECT_TRUE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Repairing));
+    EXPECT_FALSE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Ready));
+    EXPECT_FALSE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Error));
 }
 
 TEST_F(UsenetPieceStoreTest, discoverySamplePiecesAreDeterministicBoundedAndUseful)

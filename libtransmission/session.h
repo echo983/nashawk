@@ -1307,6 +1307,7 @@ private:
     void stopUsenetUploadWorker();
     void enqueueUsenetUploadTask(UsenetUploadTask task);
     void cancelPendingUsenetUploadsForDiscovery(std::string_view info_hash_string);
+    [[nodiscard]] bool holdUsenetUploadBatchForDiscovery(std::vector<UsenetUploadTask> const& batch);
     void usenetUploadWorker();
 
     std::mutex usenet_upload_mutex_;

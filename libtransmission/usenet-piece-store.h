@@ -124,7 +124,8 @@ struct tr_usenet_piece_manifest
     [[nodiscard]] bool is_available(tr_piece_index_t piece) const noexcept;
     [[nodiscard]] bool has_message_id_state(std::string_view message_id, tr_usenet_piece_state state) const noexcept;
     [[nodiscard]] bool has_meaningful_state() const noexcept;
-    [[nodiscard]] bool record_discovery_upload_attempt(tr_piece_index_t piece, bool duplicate_verified);
+    [[nodiscard]] bool record_discovery_upload_attempt(tr_piece_index_t piece, bool duplicate_verified, uint64_t now_seconds);
+    [[nodiscard]] bool reset_interrupted_discovery(uint64_t now_seconds);
 
     void set_piece_state(
         tr_piece_index_t piece,
@@ -195,6 +196,7 @@ private:
 [[nodiscard]] std::optional<tr_usenet_discovery_trigger> tr_usenet_discovery_trigger_from_name(std::string_view name) noexcept;
 [[nodiscard]] bool tr_usenet_discovery_evidence_ready(tr_usenet_discovery_info const& info, size_t piece_count) noexcept;
 [[nodiscard]] std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state state) noexcept;
+[[nodiscard]] bool tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state state) noexcept;
 [[nodiscard]] std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view name) noexcept;
 [[nodiscard]] std::vector<tr_piece_index_t> tr_usenet_discovery_sample_pieces(
     std::string_view info_hash_string,

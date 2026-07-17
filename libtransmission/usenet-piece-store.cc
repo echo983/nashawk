@@ -750,6 +750,11 @@ std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state const 
     return "error"sv;
 }
 
+bool tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state const state) noexcept
+{
+    return state == tr_usenet_integrity_state::Checking || state == tr_usenet_integrity_state::Repairing;
+}
+
 std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view const name) noexcept
 {
     for (auto const state : { tr_usenet_integrity_state::NotChecked,
@@ -885,16 +890,19 @@ bool tr_usenet_piece_manifest::has_meaningful_state() const noexcept
         [](auto const& entry) { return entry.state != tr_usenet_piece_state::Unknown; });
 }
 
-bool tr_usenet_piece_manifest::record_discovery_upload_attempt(tr_piece_index_t const piece, bool const duplicate_verified)
+bool tr_usenet_piece_manifest::record_discovery_upload_attempt(
+    tr_piece_index_t const piece,
+    bool const duplicate_verified,
+    uint64_t const current_time)
 {
-    if (piece >= std::size(pieces))
+    if (piece >= std::size(pieces) || discovery.retry_after > current_time)
     {
         return false;
     }
 
     if (discovery.evidence_window_started_at == 0U)
     {
-        discovery.evidence_window_started_at = now_seconds();
+        discovery.evidence_window_started_at = current_time;
     }
 
     auto add_unique_message_id = [this, piece](std::vector<tr_piece_index_t>& values)
@@ -914,6 +922,19 @@ bool tr_usenet_piece_manifest::record_discovery_upload_attempt(tr_piece_index_t 
         add_unique_message_id(discovery.duplicate_verified_pieces);
     }
     return tr_usenet_discovery_evidence_ready(discovery, piece_count());
+}
+
+bool tr_usenet_piece_manifest::reset_interrupted_discovery(uint64_t const current_time)
+{
+    if (discovery.state != tr_usenet_discovery_state::Checking)
+    {
+        return false;
+    }
+
+    discovery.state = tr_usenet_discovery_state::Error;
+    discovery.checked_at = current_time;
+    discovery.error = "Previous Usenet discovery was interrupted";
+    return true;
 }
 
 void tr_usenet_piece_manifest::set_piece_state(
