@@ -2607,7 +2607,6 @@ std::optional<std::string> tr_session::ensureUsenetTorrent(tr_torrent* const tor
     auto error = std::optional<std::string>{};
     auto interrupted_uploads = std::vector<tr_piece_index_t>{};
     auto interrupted_repairs = std::vector<tr_piece_index_t>{};
-    auto recoverable_failed_uploads = std::vector<tr_piece_index_t>{};
     auto interrupted_discovery = false;
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
@@ -2642,16 +2641,6 @@ std::optional<std::string> tr_session::ensureUsenetTorrent(tr_torrent* const tor
                     }
                 }
             }
-            if (manifest)
-            {
-                for (tr_piece_index_t piece = 0; piece < tor->piece_count(); ++piece)
-                {
-                    if (manifest->pieces[piece].state == tr_usenet_piece_state::Failed && tor->has_piece(piece))
-                    {
-                        recoverable_failed_uploads.push_back(piece);
-                    }
-                }
-            }
             if (manifest && manifest_changed && !usenet_piece_store_->save(*manifest))
             {
                 error = "Could not save recovered Usenet manifest state";
@@ -2682,16 +2671,6 @@ std::optional<std::string> tr_session::ensureUsenetTorrent(tr_torrent* const tor
         {
             onUsenetPieceCompleted(*tor, piece);
             tr_logAddTraceTor(tor, fmt::format("Requeued interrupted Usenet repair for piece {}", piece));
-        }
-    }
-
-    for (auto const piece : recoverable_failed_uploads)
-    {
-        if (std::find(std::begin(interrupted_uploads), std::end(interrupted_uploads), piece) == std::end(interrupted_uploads) &&
-            std::find(std::begin(interrupted_repairs), std::end(interrupted_repairs), piece) == std::end(interrupted_repairs))
-        {
-            onUsenetPieceCompleted(*tor, piece);
-            tr_logAddTraceTor(tor, fmt::format("Requeued failed local Usenet upload for piece {}", piece));
         }
     }
 
@@ -2851,7 +2830,9 @@ void tr_session::queueUsenetUploadsForLocalPieces(tr_torrent const& tor)
         auto const piece_count = std::min<tr_piece_index_t>(tor.piece_count(), manifest->piece_count());
         for (tr_piece_index_t piece = 0; piece < piece_count; ++piece)
         {
-            if (manifest->pieces[piece].state == tr_usenet_piece_state::Unknown && tor.has_piece(piece))
+            if ((manifest->pieces[piece].state == tr_usenet_piece_state::Unknown ||
+                 manifest->pieces[piece].state == tr_usenet_piece_state::Failed) &&
+                tor.has_piece(piece))
             {
                 pieces.push_back(piece);
             }
