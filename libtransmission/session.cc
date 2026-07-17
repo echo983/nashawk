@@ -2659,7 +2659,6 @@ std::optional<std::string> tr_session::ensureUsenetTorrent(tr_torrent* const tor
         }
     }
 
-    maybeQueueUsenetDiscovery(*tor);
     (void)queueUsenetIntegrityAudit(*tor, false);
     return {};
 }
@@ -2681,7 +2680,9 @@ void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
             return;
         }
 
-        if (manifest->has_meaningful_state() || manifest->discovery.state != tr_usenet_discovery_state::NotChecked)
+        if (!tr_usenet_discovery_evidence_ready(manifest->discovery, manifest->piece_count()) ||
+            manifest->discovery.state == tr_usenet_discovery_state::Checking ||
+            manifest->discovery.state == tr_usenet_discovery_state::Available)
         {
             return;
         }
@@ -2708,6 +2709,7 @@ void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
         }
 
         manifest->discovery.state = tr_usenet_discovery_state::Checking;
+        manifest->discovery.trigger = tr_usenet_discovery_trigger::DuplicateEvidence;
         manifest->discovery.checked_at = 0U;
         manifest->discovery.sample_size = settings_.usenet_discovery_sample_size;
         manifest->discovery.sampled_pieces = sample_pieces;
@@ -2723,6 +2725,8 @@ void tr_session::maybeQueueUsenetDiscovery(tr_torrent const& tor)
         tr_logAddWarnTor(&tor, std::move(*error));
         return;
     }
+
+    cancelPendingUsenetUploadsForDiscovery(tor.info_hash_string());
 
     auto const sample_count = std::size(samples);
     enqueueUsenetDiscoveryTask(
@@ -3329,14 +3333,29 @@ void tr_session::onUsenetDiscoveryFinished(UsenetDiscoveryResult result)
         manifest->discovery.sample_size = result.task.requested_sample_size;
         manifest->discovery.error = result.error;
 
-        if (result.state == tr_usenet_discovery_state::Available && !manifest->has_meaningful_state())
+        if (result.state == tr_usenet_discovery_state::Available)
         {
-            manifest->set_all_piece_states(tr_usenet_piece_state::Available);
+            for (tr_piece_index_t piece_index = 0; piece_index < manifest->piece_count(); ++piece_index)
+            {
+                auto& piece = manifest->pieces[piece_index];
+                if (piece.state == tr_usenet_piece_state::Unknown || piece.state == tr_usenet_piece_state::Uploading)
+                {
+                    manifest->set_piece_state(piece_index, tr_usenet_piece_state::Available);
+                    piece.verified_at = 0U;
+                }
+            }
             auto const verified_at = static_cast<uint64_t>(tr_time());
             for (auto const& sample : result.task.samples)
             {
                 manifest->mark_message_id_verified(sample.message_id, verified_at);
             }
+        }
+        else if (manifest->discovery.trigger == tr_usenet_discovery_trigger::DuplicateEvidence)
+        {
+            // A failed run consumes its evidence window. Fresh verified duplicates
+            // are required before automatic discovery can run again.
+            manifest->discovery.attempted_pieces.clear();
+            manifest->discovery.duplicate_verified_pieces.clear();
         }
 
         if (!usenet_piece_store_->save(*manifest))
@@ -3372,6 +3391,10 @@ void tr_session::onUsenetDiscoveryFinished(UsenetDiscoveryResult result)
         {
             (void)queueUsenetIntegrityAudit(*tor, false);
         }
+        else
+        {
+            queueUsenetUploadsForLocalPieces(*tor);
+        }
     }
 }
 
@@ -3398,6 +3421,11 @@ std::optional<std::string> tr_session::queueUsenetIntegrityAudit(tr_torrent cons
         if (!manifest || manifest->piece_count() < tor.piece_count())
         {
             return "Usenet manifest is missing or incomplete";
+        }
+        if (!manual && manifest->discovery.state != tr_usenet_discovery_state::Available &&
+            std::ranges::any_of(manifest->pieces, [](auto const& piece) { return piece.verified_at == 0U; }))
+        {
+            return {};
         }
         if (manifest->integrity.state == tr_usenet_integrity_state::Checking)
         {
@@ -3875,6 +3903,56 @@ void tr_session::enqueueUsenetUploadTask(UsenetUploadTask task)
     usenet_upload_cv_.notify_one();
 }
 
+void tr_session::cancelPendingUsenetUploadsForDiscovery(std::string_view const info_hash_string)
+{
+    auto cancelled = std::vector<UsenetUploadTask>{};
+    {
+        auto lock = std::lock_guard{ usenet_upload_mutex_ };
+        for (auto iter = std::begin(usenet_upload_queue_); iter != std::end(usenet_upload_queue_);)
+        {
+            if (iter->info_hash_string == info_hash_string)
+            {
+                cancelled.push_back(std::move(*iter));
+                iter = usenet_upload_queue_.erase(iter);
+            }
+            else
+            {
+                ++iter;
+            }
+        }
+    }
+
+    if (usenet_piece_store_ != nullptr && !std::empty(cancelled))
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        auto manifest = usenet_piece_store_->load(info_hash_string);
+        if (manifest)
+        {
+            for (auto const& task : cancelled)
+            {
+                if (task.piece < manifest->piece_count() &&
+                    manifest->pieces[task.piece].state == tr_usenet_piece_state::Uploading)
+                {
+                    manifest->set_message_id_state(task.message_id, tr_usenet_piece_state::Unknown);
+                }
+            }
+            if (!usenet_piece_store_->save(*manifest))
+            {
+                tr_logAddWarn(fmt::format("Could not reset cancelled Usenet uploads for torrent {}", info_hash_string));
+            }
+        }
+    }
+
+    for (auto const& task : cancelled)
+    {
+        tr_sys_path_remove(task.temp_file);
+    }
+    if (!std::empty(cancelled))
+    {
+        tr_logAddInfo(fmt::format("Held {} pending Usenet upload(s) for discovery", std::size(cancelled)));
+    }
+}
+
 void tr_session::usenetUploadWorker()
 {
     for (;;)
@@ -4182,6 +4260,10 @@ void tr_session::onUsenetPieceCompleted(tr_torrent const& tor, tr_piece_index_t 
         }
         else
         {
+            if (manifest->discovery.state == tr_usenet_discovery_state::Checking)
+            {
+                return;
+            }
             entry = manifest->pieces[piece];
             if (manifest->has_message_id_state(entry->message_id, tr_usenet_piece_state::Available))
             {
@@ -4341,6 +4423,13 @@ void tr_session::onUsenetPieceUploadFinished(
         if (evidence_ready)
         {
             tr_logAddInfo(fmt::format("Usenet duplicate evidence threshold reached for torrent {}", info_hash_string));
+            if (auto const digest = tr_sha1_from_string(info_hash_string); digest)
+            {
+                if (auto* const tor = torrents_.get(*digest); tor != nullptr)
+                {
+                    maybeQueueUsenetDiscovery(*tor);
+                }
+            }
         }
         tr_logAddTrace(fmt::format("Usenet upload completed for piece {}", piece));
         scanUsenetEvictionCandidates();
