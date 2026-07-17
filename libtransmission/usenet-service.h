@@ -70,6 +70,13 @@ enum class tr_usenet_article_exists_result : uint8_t
     Missing,
 };
 
+struct tr_usenet_missing_articles_request
+{
+    std::string_view config_dir;
+    std::string_view base_message_id;
+    size_t article_count = 0U;
+};
+
 [[nodiscard]] std::optional<std::string> tr_usenet_startup_check(std::string_view config_dir, tr_variant const& settings);
 [[nodiscard]] std::vector<std::string> tr_usenet_parse_duplicate_message_ids(std::string_view stderr_text);
 [[nodiscard]] std::optional<std::string> tr_usenet_upload_file(
@@ -80,6 +87,8 @@ enum class tr_usenet_article_exists_result : uint8_t
     tr_usenet_upload_diagnostics* diagnostics = nullptr);
 [[nodiscard]] std::variant<tr_usenet_article_exists_result, std::string> tr_usenet_article_exists(
     tr_usenet_article_exists_request const& request);
+[[nodiscard]] std::variant<std::vector<size_t>, std::string> tr_usenet_missing_piece_articles(
+    tr_usenet_missing_articles_request const& request);
 [[nodiscard]] std::optional<std::string> tr_usenet_download_piece(
     tr_usenet_download_request const& request,
     std::vector<uint8_t>& setme);

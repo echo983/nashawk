@@ -178,23 +178,46 @@ export class TorrentRendererFull {
     const servingState = t.getUsenetServingState();
     const s = [];
 
-    if (servingState && servingState.state !== 'local' && !is_done) {
+    if (
+      servingState &&
+      servingState.state !== 'local' &&
+      (!is_done || servingState.state === 'usenet-uploading')
+    ) {
       const summary = t.getUsenetPieceSummary();
       const pieceCount = summary?.piece_count ?? 0;
       const servable = summary?.servable ?? 0;
       const local = summary?.local_piece_count ?? 0;
+      const available = summary?.available ?? 0;
+      const uploading = summary?.uploading ?? 0;
+      const failed = summary?.failed ?? 0;
 
-      s.push(
-        servingState.label,
-        ' - ',
-        fmt.number(servable),
-        ' of ',
-        fmt.number(pieceCount),
-        ' pieces servable',
-      );
+      if (servingState.state === 'usenet-uploading') {
+        s.push(
+          'Usenet upload - ',
+          fmt.number(available),
+          ' of ',
+          fmt.number(pieceCount),
+          ' pieces confirmed, ',
+          fmt.number(uploading),
+          ' uploading',
+        );
+        if (failed > 0) {
+          s.push(', ', fmt.number(failed), ' failed');
+        }
+        s.push('; all ', fmt.number(servable), ' pieces currently servable');
+      } else {
+        s.push(
+          servingState.label,
+          ' - ',
+          fmt.number(servable),
+          ' of ',
+          fmt.number(pieceCount),
+          ' pieces servable',
+        );
+      }
       if (servingState.state === 'usenet-ready') {
         s.push(', local cache empty');
-      } else {
+      } else if (servingState.state !== 'usenet-uploading') {
         s.push(', ', fmt.number(local), ' local');
       }
     } else if (is_done) {

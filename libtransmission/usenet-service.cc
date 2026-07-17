@@ -1459,6 +1459,61 @@ std::variant<tr_usenet_article_exists_result, std::string> tr_usenet_article_exi
 #endif
 }
 
+std::variant<std::vector<size_t>, std::string> tr_usenet_missing_piece_articles(
+    tr_usenet_missing_articles_request const& request)
+{
+    auto const base_message_id = normalized_message_id(request.base_message_id);
+    if (std::empty(base_message_id) || request.article_count == 0U || request.article_count > TrUsenetMaxArticlesPerPiece)
+    {
+        return "Usenet missing article scan requires a valid piece Message-ID and article count";
+    }
+
+    auto error = std::string{};
+    auto const config = load_usenet_config(request.config_dir, error);
+    if (!config)
+    {
+        return error;
+    }
+
+#ifdef _WIN32
+    return "Usenet missing article scan is not implemented on Windows yet";
+#else
+    auto connection = NntpConnection{};
+    if (auto connect_error = connection.connect_to(*config); connect_error)
+    {
+        return *connect_error;
+    }
+    if (auto auth_error = connection.auth(*config); auth_error)
+    {
+        return *auth_error;
+    }
+    if (auto group_error = connection.group(config->group); group_error)
+    {
+        return *group_error;
+    }
+
+    auto missing = std::vector<size_t>{};
+    for (size_t article = 0U; article < request.article_count; ++article)
+    {
+        auto const message_id = tr_usenet_piece_article_message_id(base_message_id, article);
+        if (!message_id)
+        {
+            return "Could not derive multipart Usenet Message-ID during missing article scan";
+        }
+        auto const exists = connection.stat(*message_id);
+        if (std::holds_alternative<std::string>(exists))
+        {
+            return std::get<std::string>(std::move(exists));
+        }
+        if (std::get<tr_usenet_article_exists_result>(exists) == tr_usenet_article_exists_result::Missing)
+        {
+            missing.push_back(article);
+        }
+    }
+    return missing;
+#endif
+}
+
 std::optional<std::string> tr_usenet_assemble_piece_chain(
     std::string_view const base_message_id,
     uint64_t const expected_size,

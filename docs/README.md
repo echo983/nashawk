@@ -32,6 +32,7 @@ Much of this documentation is out-of-date or could be improved. Pull requests ar
  * [Transmission's Peer ID and User-Agent headers](Peer-ID-and-User-Agent.md)
  * [Peer status text explained](Peer-Status-Text.md)
  * [Nashawk Usenet piece backend](Usenet-Piece-Backend-README.md)
+ * [Nashawk Usenet RPC extension](Usenet-RPC.md)
  * [Nashawk Usenet backend roadmap](Usenet-Backend-Roadmap.md)
  * [Nashawk evidence-driven Usenet discovery design](Usenet-Evidence-Driven-Discovery-Design.md)
  * [Nashawk Usenet archived design and implementation notes](archive/README.md)
