@@ -108,6 +108,7 @@ public:
     bool tcp_enabled = true;
     bool torrent_complete_verify_enabled = false;
     bool utp_enabled = true;
+    bool usenet_evict_after_readback = false;
     bool usenet_eviction_enabled = false;
     bool usenet_discovery_enabled = true;
     bool usenet_enabled = false;
@@ -233,6 +234,7 @@ public:
         Field<&SessionSettings::usenet_check_article_size>{ TR_KEY_usenet_check_article_size },
         Field<&SessionSettings::usenet_discovery_enabled>{ TR_KEY_usenet_discovery_enabled },
         Field<&SessionSettings::usenet_discovery_sample_size>{ TR_KEY_usenet_discovery_sample_size },
+        Field<&SessionSettings::usenet_evict_after_readback>{ TR_KEY_usenet_evict_after_readback },
         Field<&SessionSettings::usenet_eviction_enabled>{ TR_KEY_usenet_eviction_enabled },
         Field<&SessionSettings::usenet_eviction_min_age_minutes>{ TR_KEY_usenet_eviction_min_age_minutes },
         Field<&SessionSettings::usenet_enabled>{ TR_KEY_usenet_enabled },

@@ -2887,6 +2887,7 @@ tr_usenet_runtime_snapshot tr_session::usenetRuntimeSnapshot()
 {
     auto snapshot = tr_usenet_runtime_snapshot{
         .enabled = settings_.usenet_enabled,
+        .evict_after_readback = settings_.usenet_evict_after_readback,
         .eviction_enabled = settings_.usenet_eviction_enabled,
         .discovery_enabled = settings_.usenet_discovery_enabled,
         .io_limit = usenetIoLimit(),
@@ -3054,7 +3055,7 @@ void tr_session::scanUsenetEvictionCandidates()
         {
             continue;
         }
-        if (manifest->integrity.state != tr_usenet_integrity_state::Ready)
+        if (!tr_usenet_manifest_allows_eviction(manifest->integrity.state, settings_.usenet_evict_after_readback))
         {
             continue;
         }

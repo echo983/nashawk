@@ -226,6 +226,7 @@ The equivalent settings keys are:
   "usenet_enabled": true,
   "usenet_check_article_size": 2097152,
   "usenet_cache_size_mib": 0,
+  "usenet_evict_after_readback": false,
   "usenet_eviction_enabled": false,
   "usenet_eviction_min_age_minutes": 0,
   "usenet_discovery_enabled": true,
@@ -240,14 +241,17 @@ mandatory remote verification:
 ```sh
 transmission-daemon --usenet-enabled \
   --usenet-eviction-enabled \
+  --usenet-evict-after-readback \
   --usenet-eviction-min-age-minutes 0 \
   --usenet-cache-size-mib 0
 ```
 
 `usenet_cache_size_mib` and `usenet_eviction_min_age_minutes` both default to
-`0`. When eviction is enabled, a fully verified Ready torrent can therefore
-release local pieces immediately. Set a positive minimum age or cache size to
-retain a local hot layer.
+`0`. By default, eviction still waits for a fully verified Ready torrent. With
+`--usenet-evict-after-readback`, each independently hash-verified piece may be
+released immediately without waiting for torrent-wide integrity readiness.
+Use `--no-usenet-evict-after-readback` to retain the conservative gate. Set a
+positive minimum age or cache size to retain a local hot layer.
 
 Usenet discovery is enabled by default when Usenet mode is enabled. It can be
 disabled explicitly:

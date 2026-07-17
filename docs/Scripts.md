@@ -47,6 +47,7 @@ Usenet upload concurrency: 40
 Usenet discovery: enabled
 Usenet discovery sample size: 16
 Usenet eviction: enabled
+Evict after readback: enabled
 Usenet cache size: 0 MiB
 ```
 
@@ -57,6 +58,7 @@ NASHAWK_RPC_PORT=19092 ./scripts/run-usenet-webui-test.sh
 NASHAWK_LOG_FILE=/tmp/nashawk-webui-real/daemon-debug.log ./scripts/run-usenet-webui-test.sh
 NASHAWK_USENET_CHECK_ARTICLE_SIZE=8388608 ./scripts/run-usenet-webui-test.sh
 NASHAWK_USENET_EVICTION_MIN_AGE_MINUTES=5 ./scripts/run-usenet-webui-test.sh
+NASHAWK_USENET_EVICT_AFTER_READBACK=0 ./scripts/run-usenet-webui-test.sh
 NASHAWK_USENET_DISCOVERY_ENABLED=0 ./scripts/run-usenet-webui-test.sh
 NASHAWK_USENET_DISCOVERY_SAMPLE_SIZE=8 ./scripts/run-usenet-webui-test.sh
 ```

@@ -84,6 +84,7 @@ struct tr_variant;
 struct tr_usenet_runtime_snapshot
 {
     bool enabled = false;
+    bool evict_after_readback = false;
     bool eviction_enabled = false;
     bool discovery_enabled = false;
     size_t io_limit = 0U;

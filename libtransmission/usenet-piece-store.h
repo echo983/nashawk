@@ -198,6 +198,7 @@ private:
 [[nodiscard]] std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state state) noexcept;
 [[nodiscard]] bool tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state state) noexcept;
 [[nodiscard]] bool tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state state) noexcept;
+[[nodiscard]] bool tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state state, bool evict_after_readback) noexcept;
 [[nodiscard]] std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view name) noexcept;
 [[nodiscard]] std::vector<tr_piece_index_t> tr_usenet_discovery_sample_pieces(
     std::string_view info_hash_string,

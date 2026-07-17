@@ -2109,9 +2109,10 @@ void add_strings_from_var(std::set<std::string_view>& strings, tr_variant const&
 [[nodiscard]] tr_variant make_usenet_runtime_map(tr_session& session)
 {
     auto const snapshot = session.usenetRuntimeSnapshot();
-    auto map = tr_variant::Map{ 12U };
+    auto map = tr_variant::Map{ 13U };
 
     map.try_emplace(TR_KEY_usenet_enabled, snapshot.enabled);
+    map.try_emplace(TR_KEY_usenet_evict_after_readback, snapshot.evict_after_readback);
     map.try_emplace(TR_KEY_usenet_discovery_enabled, snapshot.discovery_enabled);
     map.try_emplace(TR_KEY_usenet_discovery_sample_size, snapshot.discovery_sample_size);
     map.try_emplace(TR_KEY_usenet_io_limit, snapshot.io_limit);
@@ -2365,6 +2366,11 @@ using SessionAccessors = std::pair<SessionGetter, SessionSetter>;
     map.try_emplace(
         TR_KEY_usenet_discovery_sample_size,
         [](tr_session const& src) -> tr_variant { return src.settings().usenet_discovery_sample_size; },
+        nullptr);
+
+    map.try_emplace(
+        TR_KEY_usenet_evict_after_readback,
+        [](tr_session const& src) -> tr_variant { return src.settings().usenet_evict_after_readback; },
         nullptr);
 
     map.try_emplace(

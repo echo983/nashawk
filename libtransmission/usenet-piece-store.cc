@@ -760,6 +760,11 @@ bool tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state const
     return state == tr_usenet_discovery_state::Checking;
 }
 
+bool tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state const state, bool const evict_after_readback) noexcept
+{
+    return state == tr_usenet_integrity_state::Ready || evict_after_readback;
+}
+
 std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view const name) noexcept
 {
     for (auto const state : { tr_usenet_integrity_state::NotChecked,

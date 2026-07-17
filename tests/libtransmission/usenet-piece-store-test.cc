@@ -144,6 +144,18 @@ TEST_F(UsenetPieceStoreTest, evictionEligibilityRequiresAvailableLocalOldPiece)
     EXPECT_FALSE(tr_usenet_piece_is_eviction_eligible(entry, true, 200U, 60U));
 }
 
+TEST_F(UsenetPieceStoreTest, immediateReadbackEvictionBypassesOnlyTheTorrentWideReadyGate)
+{
+    EXPECT_FALSE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::NotChecked, false));
+    EXPECT_FALSE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::Checking, false));
+    EXPECT_FALSE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::Incomplete, false));
+    EXPECT_TRUE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::Ready, false));
+
+    EXPECT_TRUE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::NotChecked, true));
+    EXPECT_TRUE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::Checking, true));
+    EXPECT_TRUE(tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state::Incomplete, true));
+}
+
 TEST_F(UsenetPieceStoreTest, ensureTorrentCreatesManifest)
 {
     auto metainfo = load_metainfo("archlinux-2025.05.01-x86_64.iso.torrent"sv);
