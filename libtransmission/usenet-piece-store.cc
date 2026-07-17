@@ -64,6 +64,31 @@ auto constexpr Domain = "nashawk.local"sv;
     return tr_quark_new("discovery"sv);
 }
 
+[[nodiscard]] tr_quark key_trigger()
+{
+    return tr_quark_new("trigger"sv);
+}
+
+[[nodiscard]] tr_quark key_attempted_pieces()
+{
+    return tr_quark_new("attempted_pieces"sv);
+}
+
+[[nodiscard]] tr_quark key_duplicate_verified_pieces()
+{
+    return tr_quark_new("duplicate_verified_pieces"sv);
+}
+
+[[nodiscard]] tr_quark key_evidence_window_started_at()
+{
+    return tr_quark_new("evidence_window_started_at"sv);
+}
+
+[[nodiscard]] tr_quark key_retry_after()
+{
+    return tr_quark_new("retry_after"sv);
+}
+
 [[nodiscard]] tr_quark key_error()
 {
     return tr_quark_new("error"sv);
@@ -151,11 +176,18 @@ auto constexpr Domain = "nashawk.local"sv;
     top.try_emplace(TR_KEY_piece_size, static_cast<int64_t>(manifest.piece_size));
     top.try_emplace(key_max_article_size(), static_cast<int64_t>(manifest.max_article_size));
 
-    auto discovery = tr_variant::Map{ 5U };
+    auto discovery = tr_variant::Map{ 10U };
     discovery.try_emplace(
         TR_KEY_status,
         tr_variant::unmanaged_string(tr_usenet_discovery_state_name(manifest.discovery.state)));
+    discovery.try_emplace(
+        key_trigger(),
+        tr_variant::unmanaged_string(tr_usenet_discovery_trigger_name(manifest.discovery.trigger)));
     discovery.try_emplace(key_checked_at(), static_cast<int64_t>(manifest.discovery.checked_at));
+    discovery.try_emplace(
+        key_evidence_window_started_at(),
+        static_cast<int64_t>(manifest.discovery.evidence_window_started_at));
+    discovery.try_emplace(key_retry_after(), static_cast<int64_t>(manifest.discovery.retry_after));
     discovery.try_emplace(key_sample_size(), static_cast<int64_t>(manifest.discovery.sample_size));
     if (!std::empty(manifest.discovery.error))
     {
@@ -169,6 +201,19 @@ auto constexpr Domain = "nashawk.local"sv;
         sampled_pieces.emplace_back(static_cast<int64_t>(piece));
     }
     discovery.try_emplace(key_sampled_pieces(), std::move(sampled_pieces));
+
+    auto add_piece_vector = [&discovery](tr_quark const key, std::vector<tr_piece_index_t> const& pieces)
+    {
+        auto values = tr_variant::Vector{};
+        values.reserve(std::size(pieces));
+        for (auto const piece : pieces)
+        {
+            values.emplace_back(static_cast<int64_t>(piece));
+        }
+        discovery.try_emplace(key, std::move(values));
+    };
+    add_piece_vector(key_attempted_pieces(), manifest.discovery.attempted_pieces);
+    add_piece_vector(key_duplicate_verified_pieces(), manifest.discovery.duplicate_verified_pieces);
     top.try_emplace(key_discovery(), std::move(discovery));
 
     auto integrity = tr_variant::Map{ 9U };
@@ -278,9 +323,32 @@ auto constexpr Domain = "nashawk.local"sv;
             }
         }
 
+        if (auto const trigger = discovery->value_if<std::string_view>(key_trigger()); trigger)
+        {
+            if (auto const parsed = tr_usenet_discovery_trigger_from_name(*trigger); parsed)
+            {
+                manifest.discovery.trigger = *parsed;
+            }
+            else
+            {
+                return {};
+            }
+        }
+
         if (auto const checked_at = discovery->value_if<int64_t>(key_checked_at()); checked_at && *checked_at > 0)
         {
             manifest.discovery.checked_at = static_cast<uint64_t>(*checked_at);
+        }
+
+        if (auto const started_at = discovery->value_if<int64_t>(key_evidence_window_started_at());
+            started_at && *started_at > 0)
+        {
+            manifest.discovery.evidence_window_started_at = static_cast<uint64_t>(*started_at);
+        }
+
+        if (auto const retry_after = discovery->value_if<int64_t>(key_retry_after()); retry_after && *retry_after > 0)
+        {
+            manifest.discovery.retry_after = static_cast<uint64_t>(*retry_after);
         }
 
         if (auto const sample_size = discovery->value_if<int64_t>(key_sample_size()); sample_size && *sample_size > 0)
@@ -308,6 +376,31 @@ auto constexpr Domain = "nashawk.local"sv;
                     return {};
                 }
             }
+        }
+
+        auto read_piece_vector = [discovery](tr_quark const key, std::vector<tr_piece_index_t>& setme) -> bool
+        {
+            auto const* values = discovery->find_if<tr_variant::Vector>(key);
+            if (values == nullptr)
+            {
+                return true;
+            }
+            setme.reserve(std::size(*values));
+            for (auto const& value : *values)
+            {
+                auto const piece = value.value_if<int64_t>();
+                if (!piece || *piece < 0)
+                {
+                    return false;
+                }
+                setme.push_back(static_cast<tr_piece_index_t>(*piece));
+            }
+            return true;
+        };
+        if (!read_piece_vector(key_attempted_pieces(), manifest.discovery.attempted_pieces) ||
+            !read_piece_vector(key_duplicate_verified_pieces(), manifest.discovery.duplicate_verified_pieces))
+        {
+            return {};
         }
     }
 
@@ -601,6 +694,41 @@ std::optional<tr_usenet_discovery_state> tr_usenet_discovery_state_from_name(std
     return {};
 }
 
+std::string_view tr_usenet_discovery_trigger_name(tr_usenet_discovery_trigger const trigger) noexcept
+{
+    switch (trigger)
+    {
+    case tr_usenet_discovery_trigger::None:
+        return "none"sv;
+    case tr_usenet_discovery_trigger::DuplicateEvidence:
+        return "duplicate_evidence"sv;
+    case tr_usenet_discovery_trigger::Manual:
+        return "manual"sv;
+    }
+    return "none"sv;
+}
+
+std::optional<tr_usenet_discovery_trigger> tr_usenet_discovery_trigger_from_name(std::string_view const name) noexcept
+{
+    for (auto const trigger : { tr_usenet_discovery_trigger::None,
+                                tr_usenet_discovery_trigger::DuplicateEvidence,
+                                tr_usenet_discovery_trigger::Manual })
+    {
+        if (name == tr_usenet_discovery_trigger_name(trigger))
+        {
+            return trigger;
+        }
+    }
+    return {};
+}
+
+bool tr_usenet_discovery_evidence_ready(tr_usenet_discovery_info const& info, size_t const piece_count) noexcept
+{
+    auto const required = std::min<size_t>(3U, piece_count);
+    return required != 0U && std::size(info.duplicate_verified_pieces) >= required &&
+        std::size(info.duplicate_verified_pieces) * 2U >= std::size(info.attempted_pieces);
+}
+
 std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state const state) noexcept
 {
     switch (state)
@@ -620,6 +748,16 @@ std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state const 
     }
 
     return "error"sv;
+}
+
+bool tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state const state) noexcept
+{
+    return state == tr_usenet_integrity_state::Checking || state == tr_usenet_integrity_state::Repairing;
+}
+
+bool tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state const state) noexcept
+{
+    return state == tr_usenet_discovery_state::Checking;
 }
 
 std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view const name) noexcept
@@ -694,6 +832,21 @@ std::vector<tr_piece_index_t> tr_usenet_discovery_sample_pieces(
     return samples;
 }
 
+std::vector<tr_piece_index_t> tr_usenet_prioritize_discovery_samples(
+    std::vector<tr_piece_index_t> candidates,
+    std::span<tr_piece_index_t const> duplicate_verified_pieces,
+    size_t const sample_size)
+{
+    auto const is_unverified = [duplicate_verified_pieces](tr_piece_index_t const piece)
+    {
+        return std::ranges::find(duplicate_verified_pieces, piece) == std::end(duplicate_verified_pieces);
+    };
+    std::stable_partition(std::begin(candidates), std::end(candidates), is_unverified);
+    candidates.resize(std::min(sample_size, std::size(candidates)));
+    std::sort(std::begin(candidates), std::end(candidates));
+    return candidates;
+}
+
 bool tr_usenet_piece_is_eviction_eligible(
     tr_usenet_piece_entry const& entry,
     bool const has_local_piece,
@@ -740,6 +893,53 @@ bool tr_usenet_piece_manifest::has_meaningful_state() const noexcept
         std::begin(pieces),
         std::end(pieces),
         [](auto const& entry) { return entry.state != tr_usenet_piece_state::Unknown; });
+}
+
+bool tr_usenet_piece_manifest::record_discovery_upload_attempt(
+    tr_piece_index_t const piece,
+    bool const duplicate_verified,
+    uint64_t const current_time)
+{
+    if (piece >= std::size(pieces) || discovery.retry_after > current_time)
+    {
+        return false;
+    }
+
+    if (discovery.evidence_window_started_at == 0U)
+    {
+        discovery.evidence_window_started_at = current_time;
+    }
+
+    auto add_unique_message_id = [this, piece](std::vector<tr_piece_index_t>& values)
+    {
+        auto const& message_id = pieces[piece].message_id;
+        if (std::ranges::none_of(
+                values,
+                [this, &message_id](auto const other)
+                { return other < std::size(pieces) && pieces[other].message_id == message_id; }))
+        {
+            values.push_back(piece);
+        }
+    };
+    add_unique_message_id(discovery.attempted_pieces);
+    if (duplicate_verified)
+    {
+        add_unique_message_id(discovery.duplicate_verified_pieces);
+    }
+    return tr_usenet_discovery_evidence_ready(discovery, piece_count());
+}
+
+bool tr_usenet_piece_manifest::reset_interrupted_discovery(uint64_t const current_time)
+{
+    if (discovery.state != tr_usenet_discovery_state::Checking)
+    {
+        return false;
+    }
+
+    discovery.state = tr_usenet_discovery_state::Error;
+    discovery.checked_at = current_time;
+    discovery.error = "Previous Usenet discovery was interrupted";
+    return true;
 }
 
 void tr_usenet_piece_manifest::set_piece_state(

@@ -4,6 +4,7 @@
 // License text can be found in the licenses/ folder.
 
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cstring>
 #include <cwchar>
@@ -11,6 +12,7 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include <fmt/format.h>
 #include <fmt/xchar.h> // for wchar_t support
@@ -409,5 +411,170 @@ bool tr_spawn_sync(
         error->set(static_cast<tr_error_code_t>(exit_code), fmt::format("Child process exited with code {}", exit_code));
     }
 
+    return false;
+}
+
+bool tr_spawn_sync_capture_stderr(
+    char const* const* cmd,
+    std::map<std::string_view, std::string_view> const& env,
+    std::string_view work_dir,
+    size_t const max_stderr_size,
+    tr_spawn_stderr_capture& capture,
+    tr_error* error)
+{
+    capture = {};
+    auto full_env = get_current_env();
+    for (auto const& [key, val] : env)
+    {
+        full_env.insert_or_assign(tr_win32_utf8_to_native(key), tr_win32_utf8_to_native(val));
+    }
+
+    auto cmd_line = construct_cmd_line(cmd);
+    if (std::empty(cmd_line))
+    {
+        set_system_error(error, ERROR_INVALID_PARAMETER, "Constructing command line");
+        return false;
+    }
+
+    auto security = SECURITY_ATTRIBUTES{ .nLength = sizeof(SECURITY_ATTRIBUTES),
+                                         .lpSecurityDescriptor = nullptr,
+                                         .bInheritHandle = TRUE };
+    auto stderr_read = HANDLE{};
+    auto stderr_write = HANDLE{};
+    if (!to_bool(CreatePipe(&stderr_read, &stderr_write, &security, 0)) ||
+        !to_bool(SetHandleInformation(stderr_read, HANDLE_FLAG_INHERIT, 0)))
+    {
+        auto const code = GetLastError();
+        if (stderr_read != nullptr)
+        {
+            CloseHandle(stderr_read);
+        }
+        if (stderr_write != nullptr)
+        {
+            CloseHandle(stderr_write);
+        }
+        set_system_error(error, code, "Creating stderr pipe");
+        return false;
+    }
+
+    auto const null_input = CreateFileW(
+        L"NUL",
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &security,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    auto const null_output = CreateFileW(
+        L"NUL",
+        GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &security,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (null_input == INVALID_HANDLE_VALUE || null_output == INVALID_HANDLE_VALUE)
+    {
+        auto const code = GetLastError();
+        if (null_input != INVALID_HANDLE_VALUE)
+        {
+            CloseHandle(null_input);
+        }
+        if (null_output != INVALID_HANDLE_VALUE)
+        {
+            CloseHandle(null_output);
+        }
+        CloseHandle(stderr_read);
+        CloseHandle(stderr_write);
+        set_system_error(error, code, "Opening NUL handles");
+        return false;
+    }
+
+    auto const current_dir = tr_win32_utf8_to_native(work_dir);
+    auto si = STARTUPINFOW{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+    si.wShowWindow = SW_HIDE;
+    si.hStdInput = null_input;
+    si.hStdOutput = null_output;
+    si.hStdError = stderr_write;
+
+    auto pi = PROCESS_INFORMATION{};
+    auto const created = to_bool(CreateProcessW(
+        nullptr,
+        std::data(cmd_line),
+        nullptr,
+        nullptr,
+        TRUE,
+        NORMAL_PRIORITY_CLASS | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | CREATE_DEFAULT_ERROR_MODE,
+        std::empty(full_env) ? nullptr : to_env_string(full_env).data(),
+        std::empty(current_dir) ? nullptr : current_dir.c_str(),
+        &si,
+        &pi));
+    auto const create_error = created ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(null_input);
+    CloseHandle(null_output);
+    CloseHandle(stderr_write);
+    if (!created)
+    {
+        CloseHandle(stderr_read);
+        set_system_error(error, create_error, "Call to CreateProcess()");
+        return false;
+    }
+
+    CloseHandle(pi.hThread);
+    auto reader = std::thread{
+        [&capture, stderr_read, max_stderr_size]()
+        {
+            auto buffer = std::array<char, 4096>{};
+            for (;;)
+            {
+                auto bytes_read = DWORD{};
+                if (!to_bool(
+                        ReadFile(stderr_read, std::data(buffer), static_cast<DWORD>(std::size(buffer)), &bytes_read, nullptr)))
+                {
+                    capture.truncated = capture.truncated || GetLastError() != ERROR_BROKEN_PIPE;
+                    break;
+                }
+                if (bytes_read == 0U)
+                {
+                    break;
+                }
+                auto const remaining = max_stderr_size - std::min(max_stderr_size, std::size(capture.text));
+                auto const keep = std::min<size_t>(remaining, bytes_read);
+                capture.text.append(std::data(buffer), keep);
+                capture.truncated = capture.truncated || keep != bytes_read;
+            }
+            CloseHandle(stderr_read);
+        }
+    };
+
+    auto const wait_result = WaitForSingleObject(pi.hProcess, INFINITE);
+    auto const wait_error = wait_result == WAIT_OBJECT_0 ? ERROR_SUCCESS : GetLastError();
+    reader.join();
+    if (wait_result != WAIT_OBJECT_0)
+    {
+        set_system_error(error, wait_error, "Call to WaitForSingleObject()");
+        CloseHandle(pi.hProcess);
+        return false;
+    }
+
+    auto exit_code = DWORD{};
+    if (!to_bool(GetExitCodeProcess(pi.hProcess, &exit_code)))
+    {
+        set_system_error(error, GetLastError(), "Call to GetExitCodeProcess()");
+        CloseHandle(pi.hProcess);
+        return false;
+    }
+    CloseHandle(pi.hProcess);
+
+    if (exit_code == EXIT_SUCCESS)
+    {
+        return true;
+    }
+    if (error != nullptr)
+    {
+        error->set(static_cast<tr_error_code_t>(exit_code), fmt::format("Child process exited with code {}", exit_code));
+    }
     return false;
 }

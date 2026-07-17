@@ -54,6 +54,13 @@ enum class tr_usenet_discovery_state : uint8_t
     Error,
 };
 
+enum class tr_usenet_discovery_trigger : uint8_t
+{
+    None,
+    DuplicateEvidence,
+    Manual,
+};
+
 enum class tr_usenet_integrity_state : uint8_t
 {
     NotChecked,
@@ -78,9 +85,14 @@ struct tr_usenet_piece_entry
 struct tr_usenet_discovery_info
 {
     tr_usenet_discovery_state state = tr_usenet_discovery_state::NotChecked;
+    tr_usenet_discovery_trigger trigger = tr_usenet_discovery_trigger::None;
     uint64_t checked_at = 0U;
     size_t sample_size = 0U;
     std::vector<tr_piece_index_t> sampled_pieces;
+    std::vector<tr_piece_index_t> attempted_pieces;
+    std::vector<tr_piece_index_t> duplicate_verified_pieces;
+    uint64_t evidence_window_started_at = 0U;
+    uint64_t retry_after = 0U;
     std::string error;
 };
 
@@ -112,6 +124,8 @@ struct tr_usenet_piece_manifest
     [[nodiscard]] bool is_available(tr_piece_index_t piece) const noexcept;
     [[nodiscard]] bool has_message_id_state(std::string_view message_id, tr_usenet_piece_state state) const noexcept;
     [[nodiscard]] bool has_meaningful_state() const noexcept;
+    [[nodiscard]] bool record_discovery_upload_attempt(tr_piece_index_t piece, bool duplicate_verified, uint64_t now_seconds);
+    [[nodiscard]] bool reset_interrupted_discovery(uint64_t now_seconds);
 
     void set_piece_state(
         tr_piece_index_t piece,
@@ -178,11 +192,20 @@ private:
 [[nodiscard]] std::optional<tr_usenet_piece_state> tr_usenet_piece_state_from_name(std::string_view name) noexcept;
 [[nodiscard]] std::string_view tr_usenet_discovery_state_name(tr_usenet_discovery_state state) noexcept;
 [[nodiscard]] std::optional<tr_usenet_discovery_state> tr_usenet_discovery_state_from_name(std::string_view name) noexcept;
+[[nodiscard]] std::string_view tr_usenet_discovery_trigger_name(tr_usenet_discovery_trigger trigger) noexcept;
+[[nodiscard]] std::optional<tr_usenet_discovery_trigger> tr_usenet_discovery_trigger_from_name(std::string_view name) noexcept;
+[[nodiscard]] bool tr_usenet_discovery_evidence_ready(tr_usenet_discovery_info const& info, size_t piece_count) noexcept;
 [[nodiscard]] std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state state) noexcept;
+[[nodiscard]] bool tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state state) noexcept;
+[[nodiscard]] bool tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state state) noexcept;
 [[nodiscard]] std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view name) noexcept;
 [[nodiscard]] std::vector<tr_piece_index_t> tr_usenet_discovery_sample_pieces(
     std::string_view info_hash_string,
     tr_piece_index_t piece_count,
+    size_t sample_size);
+[[nodiscard]] std::vector<tr_piece_index_t> tr_usenet_prioritize_discovery_samples(
+    std::vector<tr_piece_index_t> candidates,
+    std::span<tr_piece_index_t const> duplicate_verified_pieces,
     size_t sample_size);
 [[nodiscard]] bool tr_usenet_piece_is_eviction_eligible(
     tr_usenet_piece_entry const& entry,

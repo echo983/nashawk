@@ -33,6 +33,7 @@ Much of this documentation is out-of-date or could be improved. Pull requests ar
  * [Peer status text explained](Peer-Status-Text.md)
  * [Nashawk Usenet piece backend](Usenet-Piece-Backend-README.md)
  * [Nashawk Usenet backend roadmap](Usenet-Backend-Roadmap.md)
+ * [Nashawk evidence-driven Usenet discovery design](Usenet-Evidence-Driven-Discovery-Design.md)
  * [Nashawk Usenet archived design and implementation notes](archive/README.md)
  * [Securing Transmission's RPC interface with an open-source reverse proxy (External Link)](https://www.pomerium.com/docs/guides/transmission)
 

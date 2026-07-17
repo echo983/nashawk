@@ -34,11 +34,12 @@ Validated paths:
   coalesced instead of uploaded repeatedly
 - automatic local piece eviction for Usenet-available pieces
 - peer-triggered restore of evicted local pieces from Usenet
-- read-only Web UI and RPC observability for daemon and torrent Usenet state
-- sampled Usenet piece discovery after magnet metadata is available
+- Web UI and RPC observability for daemon and torrent Usenet state
+- evidence-driven and manually requested sampled Usenet piece discovery
 - mandatory independent readback before an uploaded piece becomes evictable
 - full torrent-level Usenet integrity audits with repair and BitTorrent fallback
 - manual `Verify Usenet data` action in the Web UI torrent context menu
+- manual `Discover on Usenet` action in the Web UI torrent context menu
 - automatic full integrity audit before the first Usenet Ready transition
 - immediate eviction eligibility after mandatory remote readback succeeds
 - startup validation through the same Nyuu upload and piece download path used
@@ -47,6 +48,16 @@ Validated paths:
 The integrity repair milestone passed all 619 enabled CTest cases and repeated
 real-provider startup upload/readback checks on 2026-07-17. Eleven upstream
 tests remained disabled by the project's normal test configuration.
+
+The evidence-driven discovery milestone passed all 626 enabled CTest cases, a
+Web UI production build, and a real-provider duplicate-upload roundtrip on
+2026-07-17. The provider test used a trackerless 1.5 MiB random fixture with six
+256 KiB pieces. A first clean node uploaded and read back all six pieces. A
+second clean manifest then received and verified three distinct duplicate
+Message-ID responses, automatically queued discovery, validated all six sample
+chains, and finished with discovery `available`, trigger
+`duplicate_evidence`, and integrity `ready`. Eleven upstream tests remained
+disabled by the normal project configuration.
 
 Current limits:
 
@@ -62,9 +73,9 @@ Current limits:
 - `usenet_cache_size_mib` is present, but the current implemented eviction pass
   is conservative and age-driven; full size-pressure/LRU policy remains future
   work.
-- Discovery runs once for a fresh manifest that does not already contain
-  meaningful Usenet piece state. Automatic rediscovery or manual reset controls
-  are future work.
+- Automatic discovery requires verified duplicate-upload evidence and uses a
+  persisted retry cooldown. Metainfo alone does not query Usenet. Operators can
+  explicitly request discovery from the torrent context menu.
 - End-to-end Usenet tests are currently manual, not CI automation.
 - Windows startup support for this mode is not implemented.
 
@@ -315,11 +326,24 @@ Discovery helps a node use Usenet data that another Nashawk node has already
 uploaded for the same torrent.
 
 After magnet metadata or torrent metainfo is available, Nashawk creates or
-loads the torrent's Usenet manifest. If the manifest has no meaningful existing
-piece state and discovery is enabled, Nashawk selects a deterministic bounded
-sample of piece indexes and validates each sampled complete article chain with
-`BODY` requests, exact metainfo size, and the BitTorrent piece hash. Discovery
-does not assume the uploader used the current node's payload limit.
+loads the torrent's Usenet manifest, but does not query Usenet merely because
+metainfo exists. Normal uploads collect evidence only when Nyuu reports an exact
+`441 Message-ID is not unique` response and Nashawk then reads back the complete
+article chain, verifies its exact metainfo size, and matches the BitTorrent
+piece hash.
+
+Automatic discovery starts after three distinct verified duplicate pieces, or
+all pieces for torrents with fewer than three pieces, provided duplicate
+evidence represents at least half of distinct completed upload attempts. A
+failed automatic run consumes that evidence window and enforces a persisted
+30-minute retry cooldown. The `Discover on Usenet` context action bypasses the
+evidence threshold and cooldown.
+
+Discovery selects a deterministic bounded sample and prefers pieces that did
+not already contribute duplicate evidence. Each sampled complete article chain
+is validated with `BODY` requests, exact metainfo size, and the BitTorrent piece
+hash. Discovery does not assume the uploader used the current node's payload
+limit.
 
 Outcomes:
 
@@ -341,9 +365,14 @@ The manifest records discovery metadata:
 {
   "discovery": {
     "status": "available",
+    "trigger": "duplicate_evidence",
     "checked_at": 1783814490,
+    "evidence_window_started_at": 1783814400,
+    "retry_after": 0,
     "sample_size": 16,
-    "sampled_pieces": [0, 9, 14]
+    "sampled_pieces": [0, 9, 14],
+    "attempted_pieces": [2, 4, 7],
+    "duplicate_verified_pieces": [2, 4, 7]
   }
 }
 ```
@@ -352,7 +381,8 @@ Discovery IO shares the same Usenet IO limit as upload and download work.
 
 ## Web UI And RPC Observability
 
-The Web UI exposes a read-only Usenet status surface without exposing secrets.
+The Web UI exposes Usenet status and bounded maintenance actions without
+exposing secrets.
 
 Session-level state is shown in the Statistics dialog and includes:
 
@@ -369,6 +399,11 @@ through Usenet.
 A torrent whose pieces are fully servable from Usenet can appear in the seeding
 activity state even when local progress is below 100%. The Usenet badges and
 Inspector summary show whether that state is local, mixed, or Usenet-backed.
+
+The torrent context menu provides `Discover on Usenet` for explicit bounded
+sample discovery and `Verify Usenet data` for a full integrity audit and repair.
+The torrent RPC summary includes the discovery trigger, evidence and attempt
+counts, required threshold, evidence-window timestamp, and retry timestamp.
 
 The browser can emit stable diagnostic console messages with the
 `[nashawk-usenet]` prefix when the local debug option is enabled. RPC and Web UI

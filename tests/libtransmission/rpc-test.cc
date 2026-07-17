@@ -846,6 +846,34 @@ TEST_F(RpcTest, torrentUsenetVerifyRejectsWhenBackendIsDisabled)
     tr_torrentRemove(tor, false);
 }
 
+TEST_F(RpcTest, torrentUsenetDiscoverRejectsWhenBackendIsDisabled)
+{
+    auto* tor = zeroTorrentInit(ZeroTorrentState::NoFiles);
+    ASSERT_NE(nullptr, tor);
+
+    auto request_map = tr_variant::Map{ 4U };
+    request_map.try_emplace(TR_KEY_jsonrpc, JsonRpc::Version);
+    request_map.try_emplace(TR_KEY_method, tr_variant::unmanaged_string(TR_KEY_torrent_usenet_discover));
+    request_map.try_emplace(TR_KEY_id, 12345);
+    auto params = tr_variant::Map{ 1U };
+    auto ids = tr_variant::Vector{};
+    ids.emplace_back(tor->id());
+    params.try_emplace(TR_KEY_ids, std::move(ids));
+    request_map.try_emplace(TR_KEY_params, std::move(params));
+
+    auto request = tr_variant{ std::move(request_map) };
+    auto response = tr_variant{};
+    tr_rpc_request_exec(session_, request, [&response](tr_variant&& resp) { response = std::move(resp); });
+
+    auto* response_map = response.get_if<tr_variant::Map>();
+    ASSERT_NE(response_map, nullptr);
+    auto* error = response_map->find_if<tr_variant::Map>(TR_KEY_error);
+    ASSERT_NE(error, nullptr);
+    EXPECT_EQ(-32602, error->value_if<int64_t>(TR_KEY_code).value_or(0));
+
+    tr_torrentRemove(tor, false);
+}
+
 TEST_F(RpcTest, recentlyActiveEmptyOnStartup)
 {
     static auto constexpr TorrentFile = LIBTRANSMISSION_TEST_ASSETS_DIR "/debian-11.2.0-amd64-DVD-1.iso.torrent"sv;

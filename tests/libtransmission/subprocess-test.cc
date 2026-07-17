@@ -353,6 +353,39 @@ TEST_P(SubprocessTest, SpawnSyncNonzeroExit)
     EXPECT_NE(""sv, error.message());
 }
 
+#ifndef _WIN32
+TEST_P(SubprocessTest, SpawnSyncCapturesAndBoundsStderr)
+{
+    auto const result_path = buildSandboxPath("result.txt");
+    auto const action = std::string{ "--dump-stderr" };
+    auto const text = std::string{ "0123456789" };
+    auto const args = std::array<char const*, 5>{ self_path_.c_str(), result_path.data(), action.data(), text.data(), nullptr };
+
+    auto capture = tr_spawn_stderr_capture{};
+    auto error = tr_error{};
+    EXPECT_TRUE(tr_spawn_sync_capture_stderr(std::data(args), {}, {}, 6U, capture, &error));
+    EXPECT_FALSE(error) << error;
+    EXPECT_EQ("012345"sv, capture.text);
+    EXPECT_TRUE(capture.truncated);
+}
+
+TEST_P(SubprocessTest, SpawnSyncCapturesStderrOnFailure)
+{
+    auto const result_path = buildSandboxPath("result.txt");
+    auto const action = std::string{ "--fail-stderr" };
+    auto const text = std::string{ "posting failed" };
+    auto const args = std::array<char const*, 5>{ self_path_.c_str(), result_path.data(), action.data(), text.data(), nullptr };
+
+    auto capture = tr_spawn_stderr_capture{};
+    auto error = tr_error{};
+    EXPECT_FALSE(tr_spawn_sync_capture_stderr(std::data(args), {}, {}, 1024U, capture, &error));
+    EXPECT_TRUE(error);
+    EXPECT_EQ(7, error.code());
+    EXPECT_EQ(text, capture.text);
+    EXPECT_FALSE(capture.truncated);
+}
+#endif
+
 INSTANTIATE_TEST_SUITE_P(
     Subprocess,
     SubprocessTest,

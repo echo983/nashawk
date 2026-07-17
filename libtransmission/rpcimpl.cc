@@ -472,6 +472,23 @@ void notifyBatchQueueChange(tr_session* session, std::vector<tr_torrent*> const&
     return { JsonRpc::Error::SUCCESS, std::string{} };
 }
 
+[[nodiscard]] std::pair<JsonRpc::Error::Code, std::string> torrentUsenetDiscover(
+    tr_session* session,
+    tr_variant::Map const& args_in,
+    tr_variant::Map& /*args_out*/)
+{
+    for (auto* tor : getTorrents(session, args_in))
+    {
+        if (auto error = session->queueUsenetDiscovery(*tor, true); error)
+        {
+            return { JsonRpc::Error::INVALID_PARAMS, std::move(*error) };
+        }
+        session->rpcNotify(TR_RPC_TORRENT_CHANGED, tor->id());
+    }
+
+    return { JsonRpc::Error::SUCCESS, std::string{} };
+}
+
 // ---
 
 namespace make_torrent_field_helpers
@@ -830,9 +847,25 @@ namespace make_torrent_field_helpers
     map.try_emplace(TR_KEY_failed, summary.failed);
     map.try_emplace(TR_KEY_servable, summary.servable);
 
-    auto discovery = tr_variant::Map{ 5U };
+    auto discovery = tr_variant::Map{ 11U };
     discovery.try_emplace(TR_KEY_status, tr_variant::unmanaged_string(tr_usenet_discovery_state_name(summary.discovery.state)));
+    discovery.try_emplace(
+        tr_quark_new("trigger"sv),
+        tr_variant::unmanaged_string(tr_usenet_discovery_trigger_name(summary.discovery.trigger)));
     discovery.try_emplace(tr_quark_new("checked_at"sv), static_cast<int64_t>(summary.discovery.checked_at));
+    discovery.try_emplace(
+        tr_quark_new("evidence_window_started_at"sv),
+        static_cast<int64_t>(summary.discovery.evidence_window_started_at));
+    discovery.try_emplace(tr_quark_new("retry_after"sv), static_cast<int64_t>(summary.discovery.retry_after));
+    discovery.try_emplace(
+        tr_quark_new("attempted_piece_count"sv),
+        static_cast<int64_t>(std::size(summary.discovery.attempted_pieces)));
+    discovery.try_emplace(
+        tr_quark_new("duplicate_evidence_count"sv),
+        static_cast<int64_t>(std::size(summary.discovery.duplicate_verified_pieces)));
+    discovery.try_emplace(
+        tr_quark_new("required_evidence_count"sv),
+        static_cast<int64_t>(std::min<size_t>(3U, summary.piece_count)));
     discovery.try_emplace(tr_quark_new("sample_size"sv), static_cast<int64_t>(summary.discovery.sample_size));
     if (!std::empty(summary.discovery.error))
     {
@@ -2933,7 +2966,7 @@ using SessionAccessors = std::pair<SessionGetter, SessionSetter>;
 
 using SyncHandler = std::pair<JsonRpc::Error::Code, std::string> (*)(tr_session*, tr_variant::Map const&, tr_variant::Map&);
 
-auto const sync_handlers = small::max_size_map<tr_quark, std::pair<SyncHandler, bool /*has_side_effects*/>, 21U>{ {
+auto const sync_handlers = small::max_size_map<tr_quark, std::pair<SyncHandler, bool /*has_side_effects*/>, 22U>{ {
     { TR_KEY_free_space, { freeSpace, false } },
     { TR_KEY_group_get, { groupGet, false } },
     { TR_KEY_group_set, { groupSet, true } },
@@ -2953,6 +2986,7 @@ auto const sync_handlers = small::max_size_map<tr_quark, std::pair<SyncHandler, 
     { TR_KEY_torrent_start, { torrentStart, true } },
     { TR_KEY_torrent_start_now, { torrentStartNow, true } },
     { TR_KEY_torrent_stop, { torrentStop, true } },
+    { TR_KEY_torrent_usenet_discover, { torrentUsenetDiscover, true } },
     { TR_KEY_torrent_usenet_verify, { torrentUsenetVerify, true } },
     { TR_KEY_torrent_verify, { torrentVerify, true } },
 } };

@@ -154,4 +154,22 @@ TEST(UsenetServiceTest, enforcesArticleSafetyBound)
     EXPECT_TRUE(std::empty(result.data));
 }
 
+TEST(UsenetServiceTest, parsesOnlyUniqueDuplicateMessageIdErrors)
+{
+    auto const first = std::string(40U, 'a') + "@nashawk.local";
+    auto const continuation = std::string(40U, 'b') + ".1@nashawk.local";
+    auto const diagnostics = fmt::format(
+        "[ERR ] NNTPError: Server could not accept post {}, returned: 441 Posting Failed. Message-ID is not unique E1\n"
+        "[WARN] unrelated 441 Message-ID is not unique\n"
+        "[ERR ] NNTPError: Server could not accept post <{}>, returned: 441 Posting Failed. Message-ID is not unique E1\n"
+        "[ERR ] NNTPError: Server could not accept post {}, returned: 441 Posting Failed. Message-ID is not unique E1\n"
+        "[ERR ] NNTPError: Server could not accept post bad id, returned: 441 Posting Failed. Message-ID is not unique E1\n"
+        "[ERR ] NNTPError: Server could not accept post ignored@nashawk.local, returned: 430 No Such Article\n",
+        first,
+        continuation,
+        first);
+
+    EXPECT_EQ((std::vector<std::string>{ first, continuation }), tr_usenet_parse_duplicate_message_ids(diagnostics));
+}
+
 } // namespace tr::test

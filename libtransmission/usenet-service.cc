@@ -1226,8 +1226,52 @@ std::optional<std::string> tr_usenet_startup_check(std::string_view const config
     return {};
 }
 
-std::optional<std::string> tr_usenet_upload_file(tr_usenet_upload_request const& request)
+std::vector<std::string> tr_usenet_parse_duplicate_message_ids(std::string_view stderr_text)
 {
+    auto message_ids = std::vector<std::string>{};
+    while (!std::empty(stderr_text))
+    {
+        auto const line_end = stderr_text.find('\n');
+        auto const line = stderr_text.substr(0U, line_end);
+        stderr_text = line_end == std::string_view::npos ? std::string_view{} : stderr_text.substr(line_end + 1U);
+
+        if (line.find("returned: 441"sv) == std::string_view::npos ||
+            line.find("Message-ID is not unique"sv) == std::string_view::npos)
+        {
+            continue;
+        }
+
+        auto const post = line.find(" post "sv);
+        auto const comma = post == std::string_view::npos ? std::string_view::npos : line.find(',', post + 6U);
+        if (post == std::string_view::npos || comma == std::string_view::npos)
+        {
+            continue;
+        }
+
+        auto const message_id = normalized_message_id(line.substr(post + 6U, comma - (post + 6U)));
+        if (std::empty(message_id) || message_id.find('@') == std::string::npos ||
+            std::ranges::any_of(message_id, [](auto const ch) { return std::isspace(static_cast<unsigned char>(ch)) != 0; }))
+        {
+            continue;
+        }
+
+        if (std::find(std::begin(message_ids), std::end(message_ids), message_id) == std::end(message_ids))
+        {
+            message_ids.push_back(message_id);
+        }
+    }
+
+    return message_ids;
+}
+
+std::optional<std::string> tr_usenet_upload_file(
+    tr_usenet_upload_request const& request,
+    tr_usenet_upload_diagnostics* diagnostics)
+{
+    if (diagnostics != nullptr)
+    {
+        *diagnostics = {};
+    }
     if (std::empty(request.file_path))
     {
         return "Usenet upload requires a file path";
@@ -1276,16 +1320,38 @@ std::optional<std::string> tr_usenet_upload_file(tr_usenet_upload_request const&
     c_args.push_back(nullptr);
 
     auto spawn_error = tr_error{};
-    if (!tr_spawn_sync(std::data(c_args), {}, {}, &spawn_error))
+    if (diagnostics == nullptr)
     {
+        if (!tr_spawn_sync(std::data(c_args), {}, {}, &spawn_error))
+        {
+            return fmt::format("nyuu upload failed: {}", spawn_error.message());
+        }
+        return {};
+    }
+
+    auto constexpr MaxStderrSize = size_t{ 1024U * 1024U };
+    auto capture = tr_spawn_stderr_capture{};
+    if (!tr_spawn_sync_capture_stderr(std::data(c_args), {}, {}, MaxStderrSize, capture, &spawn_error))
+    {
+        diagnostics->stderr_truncated = capture.truncated;
+        if (!capture.truncated)
+        {
+            diagnostics->duplicate_message_ids = tr_usenet_parse_duplicate_message_ids(capture.text);
+        }
         return fmt::format("nyuu upload failed: {}", spawn_error.message());
     }
 
     return {};
 }
 
-std::optional<std::string> tr_usenet_upload_files(tr_usenet_upload_batch_request const& request)
+std::optional<std::string> tr_usenet_upload_files(
+    tr_usenet_upload_batch_request const& request,
+    tr_usenet_upload_diagnostics* diagnostics)
 {
+    if (diagnostics != nullptr)
+    {
+        *diagnostics = {};
+    }
     if (std::empty(request.file_paths))
     {
         return "Usenet batch upload requires at least one file";
@@ -1332,8 +1398,24 @@ std::optional<std::string> tr_usenet_upload_files(tr_usenet_upload_batch_request
     c_args.push_back(nullptr);
 
     auto spawn_error = tr_error{};
-    if (!tr_spawn_sync(std::data(c_args), {}, {}, &spawn_error))
+    if (diagnostics == nullptr)
     {
+        if (!tr_spawn_sync(std::data(c_args), {}, {}, &spawn_error))
+        {
+            return fmt::format("nyuu batch upload failed: {}", spawn_error.message());
+        }
+        return {};
+    }
+
+    auto constexpr MaxStderrSize = size_t{ 1024U * 1024U };
+    auto capture = tr_spawn_stderr_capture{};
+    if (!tr_spawn_sync_capture_stderr(std::data(c_args), {}, {}, MaxStderrSize, capture, &spawn_error))
+    {
+        diagnostics->stderr_truncated = capture.truncated;
+        if (!capture.truncated)
+        {
+            diagnostics->duplicate_message_ids = tr_usenet_parse_duplicate_message_ids(capture.text);
+        }
         return fmt::format("nyuu batch upload failed: {}", spawn_error.message());
     }
 

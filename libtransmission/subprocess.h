@@ -5,7 +5,9 @@
 
 #pragma once
 
+#include <cstddef>
 #include <map>
+#include <string>
 #include <string_view>
 
 struct tr_error;
@@ -20,4 +22,18 @@ bool tr_spawn_sync(
     char const* const* cmd,
     std::map<std::string_view, std::string_view> const& env,
     std::string_view work_dir,
+    tr_error* error);
+
+struct tr_spawn_stderr_capture
+{
+    std::string text;
+    bool truncated = false;
+};
+
+bool tr_spawn_sync_capture_stderr(
+    char const* const* cmd,
+    std::map<std::string_view, std::string_view> const& env,
+    std::string_view work_dir,
+    size_t max_stderr_size,
+    tr_spawn_stderr_capture& capture,
     tr_error* error);

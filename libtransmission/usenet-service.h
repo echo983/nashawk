@@ -35,6 +35,12 @@ struct tr_usenet_upload_batch_request
     size_t connections = 1U;
 };
 
+struct tr_usenet_upload_diagnostics
+{
+    std::vector<std::string> duplicate_message_ids;
+    bool stderr_truncated = false;
+};
+
 struct tr_usenet_download_request
 {
     std::string_view config_dir;
@@ -65,8 +71,13 @@ enum class tr_usenet_article_exists_result : uint8_t
 };
 
 [[nodiscard]] std::optional<std::string> tr_usenet_startup_check(std::string_view config_dir, tr_variant const& settings);
-[[nodiscard]] std::optional<std::string> tr_usenet_upload_file(tr_usenet_upload_request const& request);
-[[nodiscard]] std::optional<std::string> tr_usenet_upload_files(tr_usenet_upload_batch_request const& request);
+[[nodiscard]] std::vector<std::string> tr_usenet_parse_duplicate_message_ids(std::string_view stderr_text);
+[[nodiscard]] std::optional<std::string> tr_usenet_upload_file(
+    tr_usenet_upload_request const& request,
+    tr_usenet_upload_diagnostics* diagnostics = nullptr);
+[[nodiscard]] std::optional<std::string> tr_usenet_upload_files(
+    tr_usenet_upload_batch_request const& request,
+    tr_usenet_upload_diagnostics* diagnostics = nullptr);
 [[nodiscard]] std::variant<tr_usenet_article_exists_result, std::string> tr_usenet_article_exists(
     tr_usenet_article_exists_request const& request);
 [[nodiscard]] std::optional<std::string> tr_usenet_download_piece(

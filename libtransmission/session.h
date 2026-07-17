@@ -1068,6 +1068,7 @@ public:
 
     [[nodiscard]] std::optional<std::string> addTorrent(tr_torrent* tor);
     [[nodiscard]] std::optional<std::string> ensureUsenetTorrent(tr_torrent* tor);
+    [[nodiscard]] std::optional<std::string> queueUsenetDiscovery(tr_torrent const& tor, bool manual);
     void maybeQueueUsenetDiscovery(tr_torrent const& tor);
     void queueUsenetUploadsForLocalPieces(tr_torrent const& tor);
     [[nodiscard]] bool hasUsenetPiece(tr_torrent const& tor, tr_piece_index_t piece);
@@ -1083,6 +1084,8 @@ public:
         std::string temp_file,
         size_t article_count,
         uint64_t article_payload_size,
+        bool upload_attempted,
+        bool duplicate_verified,
         bool success,
         std::string error);
 
@@ -1303,6 +1306,8 @@ private:
     void startUsenetUploadWorker();
     void stopUsenetUploadWorker();
     void enqueueUsenetUploadTask(UsenetUploadTask task);
+    void cancelPendingUsenetUploadsForDiscovery(std::string_view info_hash_string);
+    [[nodiscard]] bool holdUsenetUploadBatchForDiscovery(std::vector<UsenetUploadTask> const& batch);
     void usenetUploadWorker();
 
     std::mutex usenet_upload_mutex_;
