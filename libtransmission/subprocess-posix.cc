@@ -258,3 +258,137 @@ bool tr_spawn_sync(
 
     return false;
 }
+
+bool tr_spawn_sync_capture_stderr(
+    char const* const* cmd,
+    std::map<std::string_view, std::string_view> const& env,
+    std::string_view work_dir,
+    size_t const max_stderr_size,
+    tr_spawn_stderr_capture& capture,
+    tr_error* error)
+{
+    capture = {};
+    auto setup_pipe = std::array<int, 2>{ -1, -1 };
+    auto stderr_pipe = std::array<int, 2>{ -1, -1 };
+    if (pipe(std::data(setup_pipe)) == -1 || pipe(std::data(stderr_pipe)) == -1)
+    {
+        auto const code = errno;
+        if (setup_pipe[0] != -1)
+        {
+            close(setup_pipe[0]);
+            close(setup_pipe[1]);
+        }
+        set_system_error(error, code, "Call to pipe()");
+        return false;
+    }
+
+    if (fcntl(setup_pipe[1], F_SETFD, fcntl(setup_pipe[1], F_GETFD) | FD_CLOEXEC) == -1)
+    {
+        auto const code = errno;
+        close(setup_pipe[0]);
+        close(setup_pipe[1]);
+        close(stderr_pipe[0]);
+        close(stderr_pipe[1]);
+        set_system_error(error, code, "Call to fcntl()");
+        return false;
+    }
+
+    auto const child_pid = fork();
+    if (child_pid == -1)
+    {
+        auto const code = errno;
+        close(setup_pipe[0]);
+        close(setup_pipe[1]);
+        close(stderr_pipe[0]);
+        close(stderr_pipe[1]);
+        set_system_error(error, code, "Call to fork()");
+        return false;
+    }
+
+    if (child_pid == 0)
+    {
+        close(setup_pipe[0]);
+        close(stderr_pipe[0]);
+        if (dup2(stderr_pipe[1], STDERR_FILENO) == -1)
+        {
+            auto const child_errno = errno;
+            auto const ok = write(setup_pipe[1], &child_errno, sizeof(child_errno)) != -1;
+            _exit(ok ? EXIT_SUCCESS : EXIT_FAILURE);
+        }
+        close(stderr_pipe[1]);
+
+        if (!tr_spawn_async_in_child(cmd, env, work_dir))
+        {
+            auto const child_errno = errno;
+            auto const ok = write(setup_pipe[1], &child_errno, sizeof(child_errno)) != -1;
+            _exit(ok ? EXIT_SUCCESS : EXIT_FAILURE);
+        }
+    }
+
+    close(setup_pipe[1]);
+    close(stderr_pipe[1]);
+    if (!tr_spawn_async_in_parent(setup_pipe[0], error))
+    {
+        close(stderr_pipe[0]);
+        (void)waitpid(child_pid, nullptr, 0);
+        return false;
+    }
+
+    auto buffer = std::array<char, 4096>{};
+    for (;;)
+    {
+        auto const n_read = read(stderr_pipe[0], std::data(buffer), std::size(buffer));
+        if (n_read > 0)
+        {
+            auto const remaining = max_stderr_size - std::min(max_stderr_size, std::size(capture.text));
+            auto const keep = std::min<size_t>(remaining, static_cast<size_t>(n_read));
+            capture.text.append(std::data(buffer), keep);
+            capture.truncated = capture.truncated || keep != static_cast<size_t>(n_read);
+            continue;
+        }
+        if (n_read == 0)
+        {
+            break;
+        }
+        if (errno != EINTR)
+        {
+            auto const code = errno;
+            close(stderr_pipe[0]);
+            (void)waitpid(child_pid, nullptr, 0);
+            set_system_error(error, code, "Reading child stderr");
+            return false;
+        }
+    }
+    close(stderr_pipe[0]);
+
+    auto status = int{};
+    while (waitpid(child_pid, &status, 0) == -1)
+    {
+        if (errno != EINTR)
+        {
+            set_system_error(error, errno, "Call to waitpid()");
+            return false;
+        }
+    }
+
+    if (WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS)
+    {
+        return true;
+    }
+    if (error != nullptr)
+    {
+        if (WIFEXITED(status))
+        {
+            error->set(WEXITSTATUS(status), fmt::format("Child process exited with code {}", WEXITSTATUS(status)));
+        }
+        else if (WIFSIGNALED(status))
+        {
+            error->set(128 + WTERMSIG(status), fmt::format("Child process terminated by signal {}", WTERMSIG(status)));
+        }
+        else
+        {
+            error->set(ECHILD, "Child process did not exit normally");
+        }
+    }
+    return false;
+}

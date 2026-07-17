@@ -411,3 +411,15 @@ bool tr_spawn_sync(
 
     return false;
 }
+
+bool tr_spawn_sync_capture_stderr(
+    char const* const* cmd,
+    std::map<std::string_view, std::string_view> const& env,
+    std::string_view work_dir,
+    size_t /*max_stderr_size*/,
+    tr_spawn_stderr_capture& capture,
+    tr_error* error)
+{
+    capture = { .text = {}, .truncated = true };
+    return tr_spawn_sync(cmd, env, work_dir, error);
+}

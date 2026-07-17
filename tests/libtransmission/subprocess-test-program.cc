@@ -10,6 +10,7 @@
 #include <fmt/ostream.h>
 
 #include <fstream>
+#include <cstdio>
 #include <string>
 
 int main(int argc, char** argv)
@@ -53,6 +54,17 @@ int main(int argc, char** argv)
         }
 
         fmt::print(out, "{:s}\n", cwd);
+    }
+    else if (test_action == "--dump-stderr" || test_action == "--fail-stderr")
+    {
+        for (int i = 3; i < argc; ++i)
+        {
+            fmt::print(stderr, "{:s}", argv[i]);
+        }
+        if (test_action == "--fail-stderr")
+        {
+            return 7;
+        }
     }
     else
     {
