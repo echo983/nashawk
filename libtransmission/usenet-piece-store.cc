@@ -735,6 +735,8 @@ std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state const 
     {
     case tr_usenet_integrity_state::NotChecked:
         return "not_checked"sv;
+    case tr_usenet_integrity_state::Queued:
+        return "queued"sv;
     case tr_usenet_integrity_state::Checking:
         return "checking"sv;
     case tr_usenet_integrity_state::Repairing:
@@ -752,7 +754,8 @@ std::string_view tr_usenet_integrity_state_name(tr_usenet_integrity_state const 
 
 bool tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state const state) noexcept
 {
-    return state == tr_usenet_integrity_state::Checking || state == tr_usenet_integrity_state::Repairing;
+    return state == tr_usenet_integrity_state::Queued || state == tr_usenet_integrity_state::Checking ||
+        state == tr_usenet_integrity_state::Repairing;
 }
 
 bool tr_usenet_integrity_is_blocked_by_discovery(tr_usenet_discovery_state const state) noexcept
@@ -768,6 +771,7 @@ bool tr_usenet_manifest_allows_eviction(tr_usenet_integrity_state const state, b
 std::optional<tr_usenet_integrity_state> tr_usenet_integrity_state_from_name(std::string_view const name) noexcept
 {
     for (auto const state : { tr_usenet_integrity_state::NotChecked,
+                              tr_usenet_integrity_state::Queued,
                               tr_usenet_integrity_state::Checking,
                               tr_usenet_integrity_state::Repairing,
                               tr_usenet_integrity_state::Ready,

@@ -1426,6 +1426,7 @@ private:
     void startUsenetIntegrityWorker();
     void stopUsenetIntegrityWorker();
     void usenetIntegrityWorker();
+    void onUsenetIntegrityProgress(std::string const& info_hash_string, size_t checked, size_t verified, size_t missing);
     void onUsenetIntegrityFinished(UsenetIntegrityResult result);
 
     std::mutex usenet_integrity_mutex_;

@@ -343,6 +343,15 @@ export class Torrent extends EventTarget {
           title: 'A full Usenet article and piece hash audit is running',
         };
       }
+      if (integrity === 'queued') {
+        return {
+          label: 'Audit Queued',
+          percent: servablePercent,
+          state: 'usenet-verifying',
+          title:
+            'The full Usenet audit will start after pending uploads finish',
+        };
+      }
       if (integrity === 'repairing') {
         return {
           label: 'Repairing Usenet',

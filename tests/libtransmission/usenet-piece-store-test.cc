@@ -58,6 +58,7 @@ TEST_F(UsenetPieceStoreTest, stateNamesRoundtrip)
     EXPECT_FALSE(tr_usenet_discovery_state_from_name("not-a-discovery-state"sv));
 
     for (auto const state : { tr_usenet_integrity_state::NotChecked,
+                              tr_usenet_integrity_state::Queued,
                               tr_usenet_integrity_state::Checking,
                               tr_usenet_integrity_state::Repairing,
                               tr_usenet_integrity_state::Ready,
@@ -328,6 +329,7 @@ TEST_F(UsenetPieceStoreTest, interruptedDiscoveryBecomesRetryableError)
 TEST_F(UsenetPieceStoreTest, discoveryAndIntegrityWorkAreMutuallyExclusive)
 {
     EXPECT_FALSE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::NotChecked));
+    EXPECT_TRUE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Queued));
     EXPECT_TRUE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Checking));
     EXPECT_TRUE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Repairing));
     EXPECT_FALSE(tr_usenet_discovery_is_blocked_by_integrity(tr_usenet_integrity_state::Ready));

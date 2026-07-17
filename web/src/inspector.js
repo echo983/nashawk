@@ -532,6 +532,8 @@ export class Inspector extends EventTarget {
           e.info.usenet_integrity,
           integrity
             ? `${integrity.status ?? 'unknown'}: ${fmt.number(
+                integrity.checked ?? 0,
+              )} of ${fmt.number(pieceCount)} checked, ${fmt.number(
                 integrity.verified ?? 0,
               )} verified, ${fmt.number(
                 integrity.missing ?? 0,

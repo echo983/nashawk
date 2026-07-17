@@ -405,6 +405,13 @@ TEST_F(SessionTest, usenetMultipartPieceSizeIsAdmittedWithoutUnpromptedDiscovery
     auto store = tr_usenet_piece_store{ config_dir, 256U * 1024U };
     auto manifest = store.load(tor->info_hash_string());
     ASSERT_TRUE(manifest);
+    EXPECT_FALSE(session->queueUsenetIntegrityAudit(*tor, true));
+    manifest = store.load(tor->info_hash_string());
+    ASSERT_TRUE(manifest);
+    EXPECT_EQ(tr_usenet_integrity_state::Queued, manifest->integrity.state);
+    EXPECT_EQ(0U, manifest->integrity.started_at);
+    EXPECT_EQ(0U, manifest->integrity.checked);
+
     manifest->discovery.state = tr_usenet_discovery_state::Checking;
     ASSERT_TRUE(store.save(*manifest));
     EXPECT_EQ(

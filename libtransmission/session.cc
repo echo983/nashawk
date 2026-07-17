@@ -2680,6 +2680,16 @@ std::optional<std::string> tr_session::ensureUsenetTorrent(tr_torrent* const tor
     }
 
     (void)queueUsenetIntegrityAudit(*tor, false);
+    auto resume_queued_integrity_audit = false;
+    {
+        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+        auto const manifest = usenet_piece_store_->load(tor->info_hash_string());
+        resume_queued_integrity_audit = manifest && manifest->integrity.state == tr_usenet_integrity_state::Queued;
+    }
+    if (resume_queued_integrity_audit)
+    {
+        (void)queueUsenetIntegrityAudit(*tor, true);
+    }
     return {};
 }
 
@@ -3558,6 +3568,7 @@ std::optional<std::string> tr_session::queueUsenetIntegrityAudit(tr_torrent cons
         .info_hash_string = std::string{ tor.info_hash_string() },
         .pieces = {},
     };
+    auto waiting_for_uploads = false;
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
         auto manifest = usenet_piece_store_->load(tor.info_hash_string());
@@ -3578,33 +3589,64 @@ std::optional<std::string> tr_session::queueUsenetIntegrityAudit(tr_torrent cons
         {
             return manual ? std::optional<std::string>{ "Usenet integrity audit is already running" } : std::nullopt;
         }
+        auto const backend_ready = std::ranges::all_of(
+            manifest->pieces,
+            [](auto const& piece) { return piece.state == tr_usenet_piece_state::Available && piece.verified_at != 0U; });
+        if (manual && !backend_ready)
+        {
+            if (manifest->integrity.state != tr_usenet_integrity_state::Queued)
+            {
+                manifest->integrity = {
+                    .state = tr_usenet_integrity_state::Queued,
+                    .error = "Waiting for pending Usenet uploads and readbacks",
+                };
+                if (!usenet_piece_store_->save(*manifest))
+                {
+                    return "Could not save queued Usenet integrity audit state";
+                }
+            }
+            waiting_for_uploads = true;
+        }
         if (!manual && manifest->integrity.state != tr_usenet_integrity_state::NotChecked &&
             manifest->integrity.state != tr_usenet_integrity_state::Error)
         {
             return {};
         }
 
-        task.pieces.reserve(tor.piece_count());
-        for (tr_piece_index_t piece = 0U; piece < tor.piece_count(); ++piece)
+        if (waiting_for_uploads)
         {
-            task.pieces.push_back(
-                {
-                    .piece = piece,
-                    .message_id = manifest->pieces[piece].message_id,
-                    .expected_size = tor.piece_size(piece),
-                    .expected_hash = tor.piece_hash(piece),
-                });
+            task.pieces.clear();
         }
+        else
+        {
+            task.pieces.reserve(tor.piece_count());
+            for (tr_piece_index_t piece = 0U; piece < tor.piece_count(); ++piece)
+            {
+                task.pieces.push_back(
+                    {
+                        .piece = piece,
+                        .message_id = manifest->pieces[piece].message_id,
+                        .expected_size = tor.piece_size(piece),
+                        .expected_hash = tor.piece_hash(piece),
+                    });
+            }
 
-        manifest->integrity = {
-            .state = tr_usenet_integrity_state::Checking,
-            .started_at = static_cast<uint64_t>(tr_time()),
-            .error = {},
-        };
-        if (!usenet_piece_store_->save(*manifest))
-        {
-            return "Could not save Usenet integrity audit state";
+            manifest->integrity = {
+                .state = tr_usenet_integrity_state::Checking,
+                .started_at = static_cast<uint64_t>(tr_time()),
+                .error = {},
+            };
+            if (!usenet_piece_store_->save(*manifest))
+            {
+                return "Could not save Usenet integrity audit state";
+            }
         }
+    }
+
+    if (waiting_for_uploads)
+    {
+        tr_logAddInfoTor(&tor, "Queued full Usenet integrity audit until pending uploads finish");
+        return {};
     }
 
     {
@@ -3648,6 +3690,7 @@ void tr_session::stopUsenetIntegrityWorker()
 
 void tr_session::usenetIntegrityWorker()
 {
+    static constexpr auto ProgressBatchSize = size_t{ 16U };
     for (;;)
     {
         auto task = UsenetIntegrityTask{};
@@ -3706,9 +3749,46 @@ void tr_session::usenetIntegrityWorker()
             }
             releaseUsenetIoSlot();
             result.pieces.push_back(std::move(item));
+            if (std::size(result.pieces) % ProgressBatchSize == 0U || std::size(result.pieces) == std::size(result.task.pieces))
+            {
+                auto const checked = std::size(result.pieces);
+                auto const verified = static_cast<size_t>(std::ranges::count_if(
+                    result.pieces,
+                    [](auto const& checked_piece) { return std::empty(checked_piece.error); }));
+                queue_session_thread(
+                    [this, info_hash_string = result.task.info_hash_string, checked, verified, missing = checked - verified]()
+                    { onUsenetIntegrityProgress(info_hash_string, checked, verified, missing); });
+            }
         }
 
         queue_session_thread([this, result = std::move(result)]() mutable { onUsenetIntegrityFinished(std::move(result)); });
+    }
+}
+
+void tr_session::onUsenetIntegrityProgress(
+    std::string const& info_hash_string,
+    size_t const checked,
+    size_t const verified,
+    size_t const missing)
+{
+    if (usenet_piece_store_ == nullptr)
+    {
+        return;
+    }
+
+    auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+    auto manifest = usenet_piece_store_->load(info_hash_string);
+    if (!manifest || manifest->integrity.state != tr_usenet_integrity_state::Checking || checked <= manifest->integrity.checked)
+    {
+        return;
+    }
+
+    manifest->integrity.checked = checked;
+    manifest->integrity.verified = verified;
+    manifest->integrity.missing = missing;
+    if (!usenet_piece_store_->save(*manifest))
+    {
+        tr_logAddWarn(fmt::format("Could not save Usenet integrity audit progress at {} piece(s)", checked));
     }
 }
 
@@ -3731,6 +3811,11 @@ void tr_session::onUsenetIntegrityFinished(UsenetIntegrityResult result)
         }
 
         auto& integrity = manifest->integrity;
+        integrity.checked = 0U;
+        integrity.verified = 0U;
+        integrity.missing = 0U;
+        integrity.repairing = 0U;
+        integrity.waiting_for_peers = 0U;
         integrity.checked = std::size(result.pieces);
         integrity.finished_at = static_cast<uint64_t>(tr_time());
         integrity.error.clear();
@@ -4581,6 +4666,7 @@ void tr_session::onUsenetPieceUploadFinished(
     auto const state = success ? tr_usenet_piece_state::Available : tr_usenet_piece_state::Failed;
     auto store_error = std::optional<std::string>{};
     auto evidence_ready = false;
+    auto queued_integrity_audit_ready = false;
     {
         auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
         store_error = usenet_piece_store_->set_message_id_state(
@@ -4602,17 +4688,35 @@ void tr_session::onUsenetPieceUploadFinished(
                     [](auto const& entry)
                     { return entry.state == tr_usenet_piece_state::Available && entry.verified_at != 0U; }))
             {
-                manifest->integrity.state = tr_usenet_integrity_state::Ready;
+                queued_integrity_audit_ready = manifest->integrity.state == tr_usenet_integrity_state::Queued;
+                if (!queued_integrity_audit_ready && manifest->integrity.state != tr_usenet_integrity_state::Checking)
+                {
+                    manifest->integrity.state = tr_usenet_integrity_state::Ready;
+                    manifest->integrity.finished_at = static_cast<uint64_t>(tr_time());
+                    manifest->integrity.checked = manifest->piece_count();
+                    manifest->integrity.verified = manifest->piece_count();
+                    manifest->integrity.missing = 0U;
+                    manifest->integrity.repairing = 0U;
+                    manifest->integrity.waiting_for_peers = 0U;
+                    manifest->integrity.error.clear();
+                    if (!usenet_piece_store_->save(*manifest))
+                    {
+                        store_error = "Could not save repaired Usenet integrity state";
+                    }
+                }
+            }
+        }
+        else if (!store_error)
+        {
+            auto manifest = usenet_piece_store_->load(info_hash_string);
+            if (manifest && manifest->integrity.state == tr_usenet_integrity_state::Queued)
+            {
+                manifest->integrity.state = tr_usenet_integrity_state::Incomplete;
                 manifest->integrity.finished_at = static_cast<uint64_t>(tr_time());
-                manifest->integrity.checked = manifest->piece_count();
-                manifest->integrity.verified = manifest->piece_count();
-                manifest->integrity.missing = 0U;
-                manifest->integrity.repairing = 0U;
-                manifest->integrity.waiting_for_peers = 0U;
-                manifest->integrity.error.clear();
+                manifest->integrity.error = fmt::format("Piece {} upload failed while integrity audit was queued", piece);
                 if (!usenet_piece_store_->save(*manifest))
                 {
-                    store_error = "Could not save repaired Usenet integrity state";
+                    store_error = "Could not save failed queued Usenet integrity audit state";
                 }
             }
         }
@@ -4663,6 +4767,10 @@ void tr_session::onUsenetPieceUploadFinished(
         {
             if (auto* const tor = torrents_.get(*digest); tor != nullptr)
             {
+                if (queued_integrity_audit_ready)
+                {
+                    (void)queueUsenetIntegrityAudit(*tor, true);
+                }
                 (void)queueUsenetIntegrityAudit(*tor, false);
             }
         }

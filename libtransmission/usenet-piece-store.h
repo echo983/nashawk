@@ -64,6 +64,7 @@ enum class tr_usenet_discovery_trigger : uint8_t
 enum class tr_usenet_integrity_state : uint8_t
 {
     NotChecked,
+    Queued,
     Checking,
     Repairing,
     Ready,
