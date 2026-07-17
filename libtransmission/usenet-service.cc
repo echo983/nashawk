@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -432,45 +433,6 @@ require(path.join(nyuuRoot, 'node_modules', 'yencode'));
 
     return {};
 #endif
-}
-
-[[nodiscard]] std::string yenc_encode(std::string_view name, std::string_view payload)
-{
-    auto out = std::string{};
-    out.reserve(std::size(payload) + std::size(payload) / 64U + 128U);
-    out += fmt::format("=ybegin line=128 size={} name={}\r\n", std::size(payload), name);
-
-    auto column = size_t{ 0U };
-    for (auto const raw : payload)
-    {
-        auto ch = static_cast<unsigned char>(raw);
-        ch = static_cast<unsigned char>(ch + 42U);
-        auto const escape = ch == 0U || ch == 9U || ch == 10U || ch == 13U || ch == 61U;
-        if (escape)
-        {
-            if (column + 2U > 128U)
-            {
-                out += "\r\n";
-                column = 0U;
-            }
-            out += '=';
-            out += static_cast<char>(ch + 64U);
-            column += 2U;
-        }
-        else
-        {
-            if (column + 1U > 128U)
-            {
-                out += "\r\n";
-                column = 0U;
-            }
-            out += static_cast<char>(ch);
-            ++column;
-        }
-    }
-
-    out += fmt::format("\r\n=yend size={}\r\n", std::size(payload));
-    return out;
 }
 
 [[nodiscard]] std::optional<uint64_t> yenc_line_value(std::string_view line, std::string_view key)
@@ -977,7 +939,7 @@ private:
         last_code_ = parse_code(line);
         if (std::find(std::begin(expected), std::end(expected), last_code_) == std::end(expected))
         {
-            return fmt::format("Usenet command failed: {}", command.substr(0, command.find(' ')));
+            return fmt::format("Usenet command {} failed: {}", command.substr(0, command.find(' ')), line);
         }
 
         return {};
@@ -1121,67 +1083,75 @@ private:
     return payload;
 }
 
-[[nodiscard]] std::string make_message_id(size_t const payload_size, std::string_view suffix)
+[[nodiscard]] std::string make_message_id(std::string_view const payload)
 {
-    auto const now = std::chrono::steady_clock::now().time_since_epoch().count();
-    return fmt::format("nashawk-startup-{}-{}-{}@nashawk.local", payload_size, now, suffix);
+    return fmt::format("{}@nashawk.local", tr_sha1_to_string(tr_sha1::digest(payload)));
 }
 
-[[nodiscard]] std::string make_article(UsenetConfig const& config, std::string const& message_id, std::string const& payload)
-{
-    auto const name = fmt::format("{}.piece", message_id.substr(0, message_id.find('@')));
-    auto article = std::string{};
-    article += fmt::format("From: {}\r\n", config.from);
-    article += fmt::format("Newsgroups: {}\r\n", config.group);
-    article += fmt::format("Subject: Nashawk startup check {}\r\n", message_id);
-    article += fmt::format("Message-ID: <{}>\r\n", message_id);
-    article += "Date: Fri, 10 Jul 2026 00:00:00 +0000\r\n";
-    article += "Content-Type: application/octet-stream\r\n";
-    article += "\r\n";
-    article += yenc_encode(name, payload);
-    return article;
-}
-
-[[nodiscard]] std::optional<std::string> check_post_read(
-    UsenetConfig const& config,
-    size_t const payload_size,
-    std::string_view suffix)
+[[nodiscard]] std::optional<std::string> check_post_read(std::string_view const config_dir, size_t const payload_size)
 {
 #ifdef _WIN32
     return "Usenet startup checks are not implemented on Windows yet";
 #else
-    auto connection = NntpConnection{};
-    if (auto error = connection.connect_to(config); error)
-    {
-        return error;
-    }
-    if (auto error = connection.auth(config); error)
-    {
-        return error;
-    }
-    if (auto error = connection.group(config.group); error)
-    {
-        return error;
-    }
-
     auto const payload = make_payload(payload_size);
-    auto const message_id = make_message_id(payload_size, suffix);
-    auto const article = make_article(config, message_id, payload);
-    if (auto error = connection.post(article); error)
+    auto const expected_hash = tr_sha1::digest(payload);
+    auto const message_id = make_message_id(payload);
+    auto const yenc_name = fmt::format("{}.piece", message_id.substr(0, message_id.find('@')));
+    auto payload_path = std::string{};
+    if (auto error = write_temp_file(config_dir, "startup-piece"sv, payload, payload_path); error)
     {
         return error;
     }
+    auto payload_guard = TempPathGuard{ payload_path };
 
-    auto body = std::string{};
-    if (auto error = connection.body(message_id, body); error)
+    if (auto error = tr_usenet_upload_file(
+            {
+                .config_dir = config_dir,
+                .file_path = payload_path,
+                .message_id = message_id,
+                .subject = fmt::format("Nashawk startup check {}", message_id),
+                .yenc_name = yenc_name,
+                .article_size = payload_size,
+            });
+        error)
     {
-        return error;
+        return fmt::format("Usenet startup upload failed: {}", *error);
     }
 
-    auto const encoded = yenc_encode(fmt::format("{}.piece", message_id.substr(0, message_id.find('@'))), payload);
-    if (body.find(encoded) == std::string::npos)
+    auto downloaded = std::vector<uint8_t>{};
+    auto readback_error = std::optional<std::string>{};
+    auto constexpr ReadbackAttempts = size_t{ 4U };
+    auto constexpr ReadbackRetryDelay = 5s;
+    for (size_t attempt = 0U; attempt < ReadbackAttempts; ++attempt)
     {
-        return "Usenet startup readback did not match uploaded yEnc body";
+        if (attempt != 0U)
+        {
+            std::this_thread::sleep_for(ReadbackRetryDelay);
+        }
+
+        downloaded.clear();
+        readback_error = tr_usenet_download_piece(
+            {
+                .config_dir = config_dir,
+                .message_id = message_id,
+                .expected_size = payload_size,
+                .expected_hash = expected_hash,
+            },
+            downloaded);
+        if (!readback_error)
+        {
+            break;
+        }
+    }
+    if (readback_error)
+    {
+        return fmt::format("Usenet startup readback failed after {} attempts: {}", ReadbackAttempts, *readback_error);
+    }
+
+    if (std::size(downloaded) != std::size(payload) ||
+        std::memcmp(std::data(downloaded), std::data(payload), std::size(payload)) != 0)
+    {
+        return "Usenet startup readback did not match uploaded payload";
     }
 
     return {};
@@ -1239,7 +1209,7 @@ std::optional<std::string> tr_usenet_startup_check(std::string_view const config
         return error;
     }
 
-    if (auto post_error = check_post_read(*config, 64U, "small"sv); post_error)
+    if (auto post_error = check_post_read(config_dir, 64U); post_error)
     {
         return post_error;
     }
@@ -1247,7 +1217,7 @@ std::optional<std::string> tr_usenet_startup_check(std::string_view const config
     auto const check_size = settings_size(settings, TR_KEY_usenet_check_article_size, tr::DefaultUsenetCheckArticleSize);
     if (check_size > 64U)
     {
-        if (auto post_error = check_post_read(*config, check_size, "configured"sv); post_error)
+        if (auto post_error = check_post_read(config_dir, check_size); post_error)
         {
             return post_error;
         }
