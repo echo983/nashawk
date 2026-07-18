@@ -17,6 +17,7 @@
 #include <ranges>
 #include <tuple> // std::tie
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -742,6 +743,23 @@ public:
 
     Peers peers;
 
+    std::unordered_map<tr_piece_index_t, size_t> piece_failure_counts_;
+    std::optional<tr_piece_index_t> recovery_piece_;
+    std::string recovery_peer_;
+    std::unordered_set<std::string> recovery_rejected_peers_;
+    time_t recovery_selected_at_ = 0;
+    time_t recovery_resume_at_ = 0;
+
+    [[nodiscard]] static std::string recovery_peer_identity(tr_peer const& peer)
+    {
+        if (auto const* const msgs = dynamic_cast<tr_peerMsgs const*>(&peer); msgs != nullptr)
+        {
+            return msgs->socket_address().address().display_name();
+        }
+
+        return peer.display_name();
+    }
+
     // depends-on: tor
     std::unique_ptr<WishlistController> wishlist_controller;
 
@@ -845,6 +863,16 @@ private:
 
     void on_piece_completed(tr_piece_index_t piece)
     {
+        piece_failure_counts_.erase(piece);
+        if (recovery_piece_ == piece)
+        {
+            recovery_piece_.reset();
+            recovery_peer_.clear();
+            recovery_rejected_peers_.clear();
+            recovery_selected_at_ = 0;
+            recovery_resume_at_ = 0;
+        }
+
         bool piece_came_from_peers = false;
 
         for (auto const& peer : peers)
@@ -866,6 +894,7 @@ private:
 
     void on_got_bad_piece(tr_piece_index_t piece)
     {
+        auto contributors = std::vector<std::string>{};
         auto const maybe_add_strike = [this, piece](tr_peer* const peer)
         {
             if (peer->blame.test(piece))
@@ -885,7 +914,80 @@ private:
 
         for (auto const& peer : peers)
         {
+            if (peer->blame.test(piece))
+            {
+                contributors.emplace_back(peer->display_name());
+            }
             maybe_add_strike(peer.get());
+        }
+
+        auto& failure_count = piece_failure_counts_[piece];
+        ++failure_count;
+        if (!std::empty(contributors))
+        {
+            if (recovery_piece_ != piece)
+            {
+                recovery_rejected_peers_.clear();
+            }
+            for (auto const& peer : peers)
+            {
+                if (peer->blame.test(piece))
+                {
+                    recovery_rejected_peers_.insert(recovery_peer_identity(*peer));
+                    peer->disconnect_soon();
+                }
+            }
+
+            auto const previous = recovery_piece_ == piece ? recovery_peer_ : contributors.front();
+            auto const selected = std::ranges::min_element(
+                peers,
+                [&previous, piece](auto const& lhs, auto const& rhs)
+                {
+                    auto const lhs_missing_piece = !lhs->has_piece(piece);
+                    auto const rhs_missing_piece = !rhs->has_piece(piece);
+                    auto const lhs_contributed = lhs->blame.test(piece);
+                    auto const rhs_contributed = rhs->blame.test(piece);
+                    auto const lhs_was_previous = lhs->display_name() == previous;
+                    auto const rhs_was_previous = rhs->display_name() == previous;
+                    return std::tie(lhs_missing_piece, lhs_contributed, lhs_was_previous, lhs->strikes) <
+                        std::tie(rhs_missing_piece, rhs_contributed, rhs_was_previous, rhs->strikes);
+                });
+            recovery_piece_ = piece;
+            recovery_peer_.clear();
+            if (selected != std::end(peers) && (*selected)->has_piece(piece) && !(*selected)->blame.test(piece) &&
+                !recovery_rejected_peers_.contains(recovery_peer_identity(**selected)))
+            {
+                recovery_peer_ = (*selected)->display_name();
+                recovery_selected_at_ = tr_time();
+                tr_logAddWarnTor(
+                    tor,
+                    fmt::format(
+                        "Piece {} entered single-peer recovery after {} checksum failures; selected {}",
+                        piece,
+                        failure_count,
+                        recovery_peer_));
+            }
+        }
+
+        if (!std::empty(contributors))
+        {
+            auto summary = std::string{};
+            auto const count = std::min<size_t>(std::size(contributors), 12U);
+            for (size_t i = 0; i < count; ++i)
+            {
+                summary += i == 0U ? contributors[i] : fmt::format(", {}", contributors[i]);
+            }
+            if (count < std::size(contributors))
+            {
+                summary += fmt::format(", and {} more", std::size(contributors) - count);
+            }
+            tr_logAddWarnTor(
+                tor,
+                fmt::format(
+                    "Piece {} failed after receiving blocks from {} peer(s): {}",
+                    piece,
+                    std::size(contributors),
+                    summary));
         }
 
         for (auto& webseed : webseeds)
@@ -896,6 +998,80 @@ private:
         tr_announcerAddBytes(tor, TR_ANN_CORRUPT, byte_count);
     }
 
+public:
+    [[nodiscard]] bool peer_can_request_piece(tr_peer const& peer, tr_piece_index_t const piece)
+    {
+        if (!recovery_piece_ || *recovery_piece_ != piece)
+        {
+            return true;
+        }
+
+        auto const now = tr_time();
+        if (recovery_resume_at_ > now)
+        {
+            return false;
+        }
+        if (recovery_resume_at_ != 0)
+        {
+            recovery_resume_at_ = 0;
+            recovery_rejected_peers_.clear();
+            piece_failure_counts_[piece] = 0;
+            tr_logAddWarnTor(tor, fmt::format("Piece {} single-peer recovery cooldown ended", piece));
+        }
+
+        if (piece_failure_counts_[piece] >= 12)
+        {
+            recovery_peer_.clear();
+            recovery_selected_at_ = 0;
+            recovery_resume_at_ = now + 30 * 60;
+            tr_logAddWarnTor(tor, fmt::format("Piece {} failed checksum 12 times; pausing recovery for 30 minutes", piece));
+            return false;
+        }
+
+        if (std::empty(recovery_peer_))
+        {
+            if (!peer.has_piece(piece) || peer.blame.test(piece) ||
+                recovery_rejected_peers_.contains(recovery_peer_identity(peer)))
+            {
+                return false;
+            }
+            recovery_peer_ = peer.display_name();
+            recovery_selected_at_ = tr_time();
+            tr_logAddWarnTor(tor, fmt::format("Piece {} single-peer recovery selected {}", piece, recovery_peer_));
+            return true;
+        }
+
+        if (tr_time() - recovery_selected_at_ >= 60)
+        {
+            auto const expired = recovery_peer_;
+            for (auto const& candidate : peers)
+            {
+                if (candidate->display_name() == expired)
+                {
+                    recovery_rejected_peers_.insert(recovery_peer_identity(*candidate));
+                    candidate->disconnect_soon();
+                }
+            }
+            recovery_peer_.clear();
+            recovery_selected_at_ = 0;
+            tr_logAddWarnTor(tor, fmt::format("Piece {} single-peer recovery timed out {}; rotating peer", piece, expired));
+            return peer_can_request_piece(peer, piece);
+        }
+
+        auto const recovery_peer_connected = std::ranges::any_of(
+            peers,
+            [this](auto const& candidate) { return candidate->display_name() == recovery_peer_; });
+        if (!recovery_peer_connected)
+        {
+            recovery_peer_.clear();
+            recovery_selected_at_ = 0;
+            return peer_can_request_piece(peer, piece);
+        }
+
+        return peer.display_name() == recovery_peer_;
+    }
+
+private:
     void on_got_metainfo()
     {
         // the webseed list may have changed...
@@ -1226,7 +1402,10 @@ std::vector<tr_block_span_t> tr_peerMgrGetNextRequests(tr_torrent* torrent, tr_p
 
     if (auto& controller = torrent->swarm->wishlist_controller)
     {
-        return controller->next(numwant, [peer](tr_piece_index_t p) { return peer->has_piece(p); });
+        auto* const swarm = torrent->swarm;
+        return controller->next(
+            numwant,
+            [peer, swarm](tr_piece_index_t p) { return peer->has_piece(p) && swarm->peer_can_request_piece(*peer, p); });
     }
 
     return {};

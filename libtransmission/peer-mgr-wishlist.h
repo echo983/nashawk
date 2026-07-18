@@ -10,6 +10,7 @@
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <compare>
 #include <cstddef> // size_t
 #include <functional>
@@ -379,4 +380,5 @@ private:
     tr_salt_shaker<tr_piece_index_t> salter_ = {};
 
     Mediator& mediator_;
+    std::chrono::steady_clock::time_point last_request_at_ = std::chrono::steady_clock::now();
 };
