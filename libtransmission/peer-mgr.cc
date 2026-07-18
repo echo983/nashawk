@@ -372,6 +372,7 @@ public:
         explicit WishlistController(tr_swarm& swarm)
             : tor_{ *swarm.tor }
             , swarm_{ swarm }
+            , usenet_pieces_{ tor_.session->usenetPieceAvailability(tor_) }
             , wishlist_{ *this }
             , signal_tags_{ {
                   tor_.files_wanted_changed_.connect_scoped([this](tr_torrent*, tr_file_index_t const*, tr_file_index_t, bool)
@@ -410,7 +411,12 @@ public:
 
         [[nodiscard]] auto next(size_t const n_wanted_blocks, std::function<bool(tr_piece_index_t)> const& peer_has_piece)
         {
-            usenet_pieces_ = tor_.session->usenetPieceAvailability(tor_);
+            auto refreshed = tor_.session->usenetPieceAvailability(tor_);
+            if (refreshed.raw() != usenet_pieces_.raw())
+            {
+                usenet_pieces_ = std::move(refreshed);
+                wishlist_.on_client_piece_availability_changed();
+            }
             return wishlist_.next(n_wanted_blocks, peer_has_piece);
         }
 
