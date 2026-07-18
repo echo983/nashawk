@@ -3994,7 +3994,13 @@ void tr_session::usenetDownloadWorker()
             return;
         }
 
-        auto result = UsenetDownloadResult{ .task = std::move(task), .data = {}, .article_count = 0U, .error = {} };
+        auto result = UsenetDownloadResult{
+            .task = std::move(task),
+            .data = {},
+            .article_count = 0U,
+            .failure = tr_usenet_download_failure::None,
+            .error = {},
+        };
         auto chain = tr_usenet_download_result{};
         result.error = tr_usenet_download_piece_chain(
             {
@@ -4006,6 +4012,7 @@ void tr_session::usenetDownloadWorker()
             chain);
         result.data = std::move(chain.data);
         result.article_count = chain.article_count;
+        result.failure = chain.failure;
         releaseUsenetIoSlot();
 
         {
@@ -4036,11 +4043,14 @@ void tr_session::onUsenetPieceDownloaded(UsenetDownloadResult result)
     if (result.error)
     {
         tr_logAddWarnTor(tor, fmt::format("Could not download piece {} from Usenet: {}", result.task.piece, *result.error));
-        auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
-        (void)usenet_piece_store_->set_message_id_state(
-            result.task.info_hash_string,
-            result.task.message_id,
-            tr_usenet_piece_state::Failed);
+        if (tr_usenet_download_failure_is_definitive(result.failure))
+        {
+            auto lock = std::lock_guard{ usenet_piece_store_mutex_ };
+            (void)usenet_piece_store_->set_message_id_state(
+                result.task.info_hash_string,
+                result.task.message_id,
+                tr_usenet_piece_state::Failed);
+        }
         return;
     }
 

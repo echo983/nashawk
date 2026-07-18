@@ -194,4 +194,12 @@ TEST(UsenetServiceTest, missingArticleScanRejectsInvalidRequestsBeforeConnecting
     ASSERT_TRUE(std::holds_alternative<std::string>(result));
 }
 
+TEST(UsenetServiceTest, onlyMissingAndCorruptDownloadsDefinitivelyRevokeAvailability)
+{
+    EXPECT_FALSE(tr_usenet_download_failure_is_definitive(tr_usenet_download_failure::None));
+    EXPECT_FALSE(tr_usenet_download_failure_is_definitive(tr_usenet_download_failure::Transient));
+    EXPECT_TRUE(tr_usenet_download_failure_is_definitive(tr_usenet_download_failure::Missing));
+    EXPECT_TRUE(tr_usenet_download_failure_is_definitive(tr_usenet_download_failure::Corrupt));
+}
+
 } // namespace tr::test

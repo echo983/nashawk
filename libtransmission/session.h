@@ -68,6 +68,7 @@
 #include "libtransmission/tr-macros.h"
 #include "libtransmission/types.h"
 #include "libtransmission/usenet-piece-store.h"
+#include "libtransmission/usenet-service.h"
 #include "libtransmission/utils-ev.h"
 #include "libtransmission/verify.h"
 #include "libtransmission/web.h"
@@ -1353,6 +1354,7 @@ private:
         UsenetDownloadTask task;
         std::vector<uint8_t> data;
         size_t article_count = 0U;
+        tr_usenet_download_failure failure = tr_usenet_download_failure::None;
         std::optional<std::string> error;
     };
 
