@@ -17,14 +17,20 @@ Visit https://transmissionbt.com/ for more information.
 
 Nashawk adds an experimental Usenet-backed piece storage mode for
 `transmission-daemon`. When enabled, verified BitTorrent pieces can be uploaded
-as one yEnc Usenet article per piece, later restored on demand, and optionally
-evicted from local torrent files to reduce disk usage on storage-constrained
-hosts. The current implementation also exposes Usenet serving state in the Web
-UI and can sample deterministic piece Message-IDs after magnet metadata is
-available, allowing a node to discover torrents that another Nashawk node has
-already populated in Usenet. Fully servable Usenet-backed torrents use
-seed-like activity and peer behavior without rewriting normal local completion
-or tracker completion state.
+as one or more deterministic yEnc Usenet articles per piece, later restored on
+demand, and optionally evicted from local torrent files to reduce disk usage on
+storage-constrained hosts. The current implementation also exposes Usenet
+serving state in the Web UI and can sample deterministic piece Message-IDs
+after magnet metadata is available, allowing a node to discover torrents that
+another Nashawk node has already populated in Usenet. Fully servable
+Usenet-backed torrents use seed-like activity and peer behavior without
+rewriting normal local completion or tracker completion state.
+
+The BitTorrent picker excludes pieces already available through Usenet. When a
+missing piece repeatedly fails its BitTorrent SHA-1 check, Nashawk isolates
+subsequent attempts to one peer at a time, rejects previously failing peer IPs,
+and applies bounded retry cooldowns instead of downloading corrupt data in an
+unbounded loop.
 
 Start with [Nashawk Usenet piece backend](docs/Usenet-Piece-Backend-README.md)
 for setup, safety notes, daemon flags, and validation steps.

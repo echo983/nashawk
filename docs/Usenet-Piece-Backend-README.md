@@ -44,6 +44,10 @@ Validated paths:
 - immediate eviction eligibility after mandatory remote readback succeeds
 - startup validation through the same Nyuu upload and piece download path used
   by normal operation
+- piece selection that treats manifest-confirmed Usenet serviceability as
+  client availability and does not download those pieces again from BitTorrent
+- bounded single-peer recovery after a BitTorrent piece fails its SHA-1 check,
+  including failing-peer IP exclusion and inactivity-based peer rotation
 
 The integrity repair milestone passed all 619 enabled CTest cases and repeated
 real-provider startup upload/readback checks on 2026-07-17. Eleven upstream
@@ -58,6 +62,17 @@ Message-ID responses, automatically queued discovery, validated all six sample
 chains, and finished with discovery `available`, trigger
 `duplicate_evidence`, and integrity `ready`. Eleven upstream tests remained
 disabled by the normal project configuration.
+
+The corrupt-piece recovery milestone was field-tested on 2026-07-18 with a
+687-piece torrent whose final 16 MiB piece repeatedly failed SHA-1 after mixed
+and single-peer BitTorrent downloads. Nashawk isolated retries by peer, rotated
+only after 60 seconds without block progress, eventually obtained a valid
+piece, uploaded it as eight 2 MiB Usenet articles, completed mandatory
+readback, and reached integrity `ready` with 687 verified and zero missing
+pieces. The associated 46 recovery and picker tests passed. The complete
+libtransmission suite passed 624 of 626 tests in one run; the two existing
+subprocess `waitpid` timing tests then passed independently for three
+consecutive runs.
 
 Current limits:
 
@@ -78,6 +93,11 @@ Current limits:
   explicitly request discovery from the torrent context menu.
 - End-to-end Usenet tests are currently manual, not CI automation.
 - Windows startup support for this mode is not implemented.
+- Corrupt-piece retry state is currently in memory. Restarting the daemon
+  clears failure counts, rejected peer IPs, and cooldown state.
+- Recovery isolation currently tracks one corrupt piece per torrent at a time.
+  Other corrupt pieces remain retryable but do not have independent concurrent
+  recovery state.
 
 Prioritized remaining work is tracked in the
 [Usenet Backend Roadmap](Usenet-Backend-Roadmap.md).
@@ -331,6 +351,32 @@ When a peer requests a piece:
 7. Later peer retries are served from local disk.
 
 If fetch, decode, write, or hash verification fails, the piece is not served.
+
+## BitTorrent Corrupt-Piece Recovery
+
+Usenet-backed pieces are part of the picker's effective client availability.
+The normal BitTorrent request path therefore does not reacquire pieces that the
+manifest already makes servable. A manifest piece withdrawn after a failed
+Usenet fetch or audit becomes eligible for normal BitTorrent fallback.
+
+When a newly downloaded BitTorrent piece fails its metainfo SHA-1 check,
+Nashawk logs the expected and actual hash plus the contributing peers. Further
+attempts for that piece are isolated to one peer so blocks from multiple peers
+cannot obscure which source supplied corrupt data. Contributor and timed-out
+peer identities are rejected by IP, not by transient source port.
+
+The selected peer may take longer than 60 seconds to transfer a large piece.
+The timeout measures inactivity: every accepted block for that piece refreshes
+the deadline. A peer is rotated only after 60 seconds without progress or when
+it disconnects. After 12 failed checksum attempts, acquisition pauses for 30
+minutes before beginning a fresh bounded attempt window. Successful piece
+completion clears the recovery state and follows the normal upload, mandatory
+readback, and eviction path.
+
+Recovery counters, rejected IPs, and cooldown timestamps are not persisted
+across daemon restarts. Operators diagnosing this path should run with debug
+logging and look for `failed checksum`, `single-peer recovery selected`,
+`single-peer recovery timed out`, and `pausing recovery` messages.
 
 ## Usenet Piece Discovery
 

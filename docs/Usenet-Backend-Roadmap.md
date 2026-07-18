@@ -1,6 +1,6 @@
 # Usenet Backend Roadmap
 
-Status: Active after the integrity repair milestone merged on 2026-07-17.
+Status: Active after the corrupt-piece recovery milestone merged on 2026-07-18.
 
 This document tracks remaining work that is not required for the current
 experimental backend to operate, but matters for sustained production use. The
@@ -36,7 +36,16 @@ eviction and use bounded exponential backoff for transient NNTP failures.
 Permanent missing, malformed, or hash-mismatching chains must continue to be
 withdrawn immediately and follow the existing repair path.
 
-## Priority 4: Startup Probe Cost
+## Priority 4: Persistent Corrupt-Piece Recovery
+
+Persist bounded BitTorrent corrupt-piece recovery state across daemon restarts,
+including failure counts, rejected peer IPs, and cooldown deadlines. Extend the
+current per-torrent recovery slot to independent per-piece state so multiple
+bad pieces can recover without replacing each other's isolation context. Keep
+the existing one-peer attribution, progress-based timeout, retry ceiling, and
+normal BitTorrent fallback behavior.
+
+## Priority 5: Startup Probe Cost
 
 The current startup check intentionally posts and reads both a small article and
 the configured maximum payload. This validates the exact production path but
@@ -46,7 +55,7 @@ can be reused, while keeping credential authentication and a small read/write
 check at startup. Provide an explicit force-full-probe option for deployment
 validation.
 
-## Priority 5: Automated End-to-End Coverage
+## Priority 6: Automated End-to-End Coverage
 
 Add a controlled NNTP fixture to CI for posting, duplicate Message-ID handling,
 yEnc decoding, multipart assembly, missing continuation articles, corruption,
@@ -54,7 +63,7 @@ repair, restart recovery, and shared IO limits. Keep real-provider tests as a
 manual release gate because credentials and provider behavior cannot be assumed
 in public CI.
 
-## Priority 6: Deployment And Platform Support
+## Priority 7: Deployment And Platform Support
 
 Make the amd64 VPS package either self-contained or able to report all required
 runtime libraries before deployment. Add a repeatable Debian smoke test for the
