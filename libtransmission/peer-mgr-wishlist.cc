@@ -18,6 +18,8 @@
 #include "libtransmission/crypto-utils.h" // for tr_salt_shaker
 #include "libtransmission/peer-mgr-wishlist.h"
 #include "libtransmission/tr-assert.h"
+
+using namespace std::chrono_literals;
 #include "libtransmission/tr-macros.h" // TR_CONSTEXPR_VEC
 #include "libtransmission/types.h"
 
@@ -106,6 +108,18 @@ std::vector<tr_block_span_t> Wishlist::next(
     // Ensure the list of blocks are sorted
     // The list needs to be unique as well, but that should come naturally
     std::ranges::sort(blocks);
+    auto const now = std::chrono::steady_clock::now();
+    if (!std::empty(blocks))
+    {
+        last_request_at_ = now;
+    }
+    else if (!std::empty(candidates_) && now - last_request_at_ >= 30s)
+    {
+        candidates_.clear();
+        candidate_list_upkeep();
+        last_request_at_ = now;
+        return next(n_wanted_blocks, peer_has_piece);
+    }
     return make_spans(blocks);
 }
 

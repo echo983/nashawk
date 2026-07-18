@@ -10,7 +10,9 @@
 #endif
 
 #include <cstdint> // uint8_t
+#include <optional>
 #include <span>
+#include <string>
 
 #include "libtransmission/error-types.h"
 #include "libtransmission/block-info.h"
@@ -43,3 +45,8 @@ struct tr_torrent;
  * @brief Test to see if the piece matches its metainfo's SHA1 checksum.
  */
 [[nodiscard]] bool tr_ioTestPiece(tr_torrent const& tor, tr_piece_index_t piece);
+
+/**
+ * @brief Calculate a piece's current on-disk SHA1 checksum.
+ */
+[[nodiscard]] std::optional<std::string> tr_ioPieceHashString(tr_torrent const& tor, tr_piece_index_t piece);

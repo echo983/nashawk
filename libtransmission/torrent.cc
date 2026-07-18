@@ -2223,7 +2223,14 @@ void tr_torrent::on_piece_completed(tr_piece_index_t const piece)
 
 void tr_torrent::on_piece_failed(tr_piece_index_t const piece)
 {
-    tr_logAddDebugTor(this, fmt::format("Piece {}, which was just downloaded, failed its checksum test", piece));
+    auto const actual_hash = tr_ioPieceHashString(*this, piece).value_or("unreadable");
+    tr_logAddWarnTor(
+        this,
+        fmt::format(
+            "Piece {} failed checksum: expected {}, actual {}",
+            piece,
+            tr_sha1_to_string(piece_hash(piece)),
+            actual_hash));
 
     auto const n = piece_size(piece);
     bytes_corrupt_ += n;

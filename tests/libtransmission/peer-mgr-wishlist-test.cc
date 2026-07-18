@@ -141,6 +141,27 @@ TEST_F(PeerMgrWishlistTest, doesNotRequestPiecesThatClientHas)
     EXPECT_EQ(mediator.block_span_[2].end, spans[0].end);
 }
 
+TEST_F(PeerMgrWishlistTest, stopsRequestingPieceWhenClientAvailabilityChanges)
+{
+    auto mediator = MockMediator{};
+    mediator.block_span_[0] = { .begin = 0, .end = 100 };
+    mediator.block_span_[1] = { .begin = 100, .end = 200 };
+    mediator.piece_replication_[0] = 1;
+    mediator.piece_replication_[1] = 1;
+    mediator.client_wants_piece_.insert(0);
+    mediator.client_wants_piece_.insert(1);
+
+    auto wishlist = Wishlist{ mediator };
+
+    mediator.client_has_piece_.insert(0);
+    wishlist.on_client_piece_availability_changed();
+
+    auto const spans = wishlist.next(200, PeerHasAllPieces);
+    ASSERT_EQ(1U, std::size(spans));
+    EXPECT_EQ(mediator.block_span_[1].begin, spans[0].begin);
+    EXPECT_EQ(mediator.block_span_[1].end, spans[0].end);
+}
+
 TEST_F(PeerMgrWishlistTest, onlyRequestBlocksThePeerHas)
 {
     auto mediator = MockMediator{};

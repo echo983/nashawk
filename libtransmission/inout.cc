@@ -303,3 +303,9 @@ bool tr_ioTestPiece(tr_torrent const& tor, tr_piece_index_t const piece)
     auto const hash = recalculate_hash(tor, piece);
     return hash && *hash == tor.piece_hash(piece);
 }
+
+std::optional<std::string> tr_ioPieceHashString(tr_torrent const& tor, tr_piece_index_t const piece)
+{
+    auto const hash = recalculate_hash(tor, piece);
+    return hash ? std::optional<std::string>{ tr_sha1_to_string(*hash) } : std::nullopt;
+}
