@@ -1575,9 +1575,11 @@ std::optional<std::string> tr_usenet_download_piece_chain(
     tr_usenet_download_request const& request,
     tr_usenet_download_result& setme)
 {
+    setme = {};
     auto const message_id = normalized_message_id(request.message_id);
     if (std::empty(message_id))
     {
+        setme.failure = tr_usenet_download_failure::Corrupt;
         return "Usenet download requires a message id";
     }
 
@@ -1585,39 +1587,64 @@ std::optional<std::string> tr_usenet_download_piece_chain(
     auto const config = load_usenet_config(request.config_dir, error);
     if (!config)
     {
+        setme.failure = tr_usenet_download_failure::Transient;
         return error;
     }
 
 #ifdef _WIN32
+    setme.failure = tr_usenet_download_failure::Transient;
     return "Usenet article download is not implemented on Windows yet";
 #else
     auto connection = NntpConnection{};
     if (auto connect_error = connection.connect_to(*config); connect_error)
     {
+        setme.failure = tr_usenet_download_failure::Transient;
         return connect_error;
     }
     if (auto auth_error = connection.auth(*config); auth_error)
     {
+        setme.failure = tr_usenet_download_failure::Transient;
         return auth_error;
     }
     if (auto group_error = connection.group(config->group); group_error)
     {
+        setme.failure = tr_usenet_download_failure::Transient;
         return group_error;
     }
 
-    auto const fetch =
-        [&connection](std::string_view const article_message_id, std::vector<uint8_t>& data) -> std::optional<std::string>
+    auto failure = tr_usenet_download_failure::None;
+    auto const fetch = [&connection, &failure](
+                           std::string_view const article_message_id,
+                           std::vector<uint8_t>& data) -> std::optional<std::string>
     {
         auto body = std::string{};
         if (auto body_error = connection.body(std::string{ article_message_id }, body); body_error)
         {
+            failure = body_error->find(" 430 ") != std::string::npos ? tr_usenet_download_failure::Missing :
+                                                                       tr_usenet_download_failure::Transient;
             return body_error;
         }
 
-        return yenc_decode_body(body, 0U, data);
+        auto decode_error = yenc_decode_body(body, 0U, data);
+        if (decode_error)
+        {
+            failure = tr_usenet_download_failure::Corrupt;
+        }
+        return decode_error;
     };
 
-    return tr_usenet_assemble_piece_chain(message_id, request.expected_size, request.expected_hash, fetch, setme);
+    auto const chain_error = tr_usenet_assemble_piece_chain(
+        message_id,
+        request.expected_size,
+        request.expected_hash,
+        fetch,
+        setme);
+    if (chain_error && failure == tr_usenet_download_failure::None)
+    {
+        failure = tr_usenet_download_failure::Corrupt;
+    }
+    setme.failure = failure;
+    return chain_error;
 #endif
 }
 

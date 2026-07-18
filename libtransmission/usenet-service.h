@@ -49,10 +49,24 @@ struct tr_usenet_download_request
     std::optional<tr_sha1_digest_t> expected_hash;
 };
 
+enum class tr_usenet_download_failure : uint8_t
+{
+    None,
+    Transient,
+    Missing,
+    Corrupt,
+};
+
+[[nodiscard]] constexpr bool tr_usenet_download_failure_is_definitive(tr_usenet_download_failure const failure) noexcept
+{
+    return failure == tr_usenet_download_failure::Missing || failure == tr_usenet_download_failure::Corrupt;
+}
+
 struct tr_usenet_download_result
 {
     std::vector<uint8_t> data;
     size_t article_count = 0U;
+    tr_usenet_download_failure failure = tr_usenet_download_failure::None;
 };
 
 using tr_usenet_decoded_article_fetch = std::function<
