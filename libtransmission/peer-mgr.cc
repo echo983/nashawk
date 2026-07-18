@@ -42,6 +42,7 @@
 #include "libtransmission/peer-mgr-wishlist.h"
 #include "libtransmission/peer-mgr.h"
 #include "libtransmission/peer-msgs.h"
+#include "libtransmission/peer-recovery.h"
 #include "libtransmission/peer-socket.h"
 #include "libtransmission/quark.h"
 #include "libtransmission/session.h"
@@ -65,7 +66,6 @@ static auto constexpr CancelHistorySec = 60;
 
 namespace
 {
-
 class HandshakeMediator final : public tr_handshake::Mediator
 {
 private:
@@ -748,6 +748,7 @@ public:
     std::string recovery_peer_;
     std::unordered_set<std::string> recovery_rejected_peers_;
     time_t recovery_selected_at_ = 0;
+    time_t recovery_last_progress_at_ = 0;
     time_t recovery_resume_at_ = 0;
 
     [[nodiscard]] static std::string recovery_peer_identity(tr_peer const& peer)
@@ -870,6 +871,7 @@ private:
             recovery_peer_.clear();
             recovery_rejected_peers_.clear();
             recovery_selected_at_ = 0;
+            recovery_last_progress_at_ = 0;
             recovery_resume_at_ = 0;
         }
 
@@ -959,6 +961,7 @@ private:
             {
                 recovery_peer_ = (*selected)->display_name();
                 recovery_selected_at_ = tr_time();
+                recovery_last_progress_at_ = recovery_selected_at_;
                 tr_logAddWarnTor(
                     tor,
                     fmt::format(
@@ -1007,7 +1010,7 @@ public:
         }
 
         auto const now = tr_time();
-        if (recovery_resume_at_ > now)
+        if (tr_peer_recovery::is_cooling_down(recovery_resume_at_, now))
         {
             return false;
         }
@@ -1019,11 +1022,12 @@ public:
             tr_logAddWarnTor(tor, fmt::format("Piece {} single-peer recovery cooldown ended", piece));
         }
 
-        if (piece_failure_counts_[piece] >= 12)
+        if (tr_peer_recovery::should_pause(piece_failure_counts_[piece]))
         {
             recovery_peer_.clear();
             recovery_selected_at_ = 0;
-            recovery_resume_at_ = now + 30 * 60;
+            recovery_last_progress_at_ = 0;
+            recovery_resume_at_ = now + tr_peer_recovery::Cooldown;
             tr_logAddWarnTor(tor, fmt::format("Piece {} failed checksum 12 times; pausing recovery for 30 minutes", piece));
             return false;
         }
@@ -1037,11 +1041,12 @@ public:
             }
             recovery_peer_ = peer.display_name();
             recovery_selected_at_ = tr_time();
+            recovery_last_progress_at_ = recovery_selected_at_;
             tr_logAddWarnTor(tor, fmt::format("Piece {} single-peer recovery selected {}", piece, recovery_peer_));
             return true;
         }
 
-        if (tr_time() - recovery_selected_at_ >= 60)
+        if (tr_peer_recovery::is_inactive(recovery_last_progress_at_, now))
         {
             auto const expired = recovery_peer_;
             for (auto const& candidate : peers)
@@ -1054,6 +1059,7 @@ public:
             }
             recovery_peer_.clear();
             recovery_selected_at_ = 0;
+            recovery_last_progress_at_ = 0;
             tr_logAddWarnTor(tor, fmt::format("Piece {} single-peer recovery timed out {}; rotating peer", piece, expired));
             return peer_can_request_piece(peer, piece);
         }
@@ -1065,10 +1071,19 @@ public:
         {
             recovery_peer_.clear();
             recovery_selected_at_ = 0;
+            recovery_last_progress_at_ = 0;
             return peer_can_request_piece(peer, piece);
         }
 
         return peer.display_name() == recovery_peer_;
+    }
+
+    void on_recovery_block_received(tr_peer const& peer, tr_piece_index_t const piece)
+    {
+        if (recovery_piece_ == piece && peer.display_name() == recovery_peer_)
+        {
+            recovery_last_progress_at_ = tr_time();
+        }
     }
 
 private:
@@ -1135,6 +1150,7 @@ private:
                 s->cancel_all_requests_for_block(loc.block, peer);
                 peer->blocks_sent_to_client.add(tr_time(), 1);
                 peer->blame.set(loc.piece);
+                s->on_recovery_block_received(*peer, loc.piece);
                 s->got_block(tor, loc.block); // put this line before calling tr_torrent callback
                 tor->on_block_received(loc.block);
             }
